@@ -1,0 +1,8 @@
+# Visualizer log files
+chrome_autotest_*.txt
+chrome_step_*.txt
+*.log
+.DS_Store
+Thumbs.db
+node_modules/
+.env
