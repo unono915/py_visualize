@@ -243,6 +243,8 @@ const state = {
 - **결과**: ✅ 우측 장면 내부 실행 줄 토큰 레이어를 추가하고, 변수 이름 토큰 기준으로 연결선을 재구성
 - **요청**: 변수 박스가 겹치지 않게 개선
 - **결과**: ✅ 렌더 후 실제 노드 크기를 기준으로 충돌 해소 단계를 추가하여 겹침을 완화
+- **요청**: 코드 에디터에 `한 줄 실행` 버튼을 추가하고, 첫 줄부터 단계적으로 시작할 수 있게 변경
+- **결과**: ✅ `한 줄 실행` 버튼을 추가하고, 해당 버튼 실행 시 Step Explorer가 첫 스텝부터 열리도록 구현
 
 ---
 
@@ -260,6 +262,7 @@ const state = {
 | 2026-04-06 | Step Explorer 재생 플레이어 확장 | `index.html`, `style.css`, `visualizer.js`, `WORK_PROGRESS.md`, `PROJECT_CONTEXT.md` | ✅ 완료 |
 | 2026-04-06 | 장면형 변수 캔버스 및 연결선 기반 레이아웃 전환 | `index.html`, `style.css`, `visualizer.js`, `WORK_PROGRESS.md`, `PROJECT_CONTEXT.md` | ✅ 완료 |
 | 2026-04-07 | 우측 실행 줄 토큰 기준 연결선 및 노드 겹침 완화 | `index.html`, `style.css`, `visualizer.js`, `WORK_PROGRESS.md`, `PROJECT_CONTEXT.md` | ✅ 완료 |
+| 2026-04-07 | `한 줄 실행` 단계 진입 버튼 추가 | `index.html`, `visualizer.js`, `WORK_PROGRESS.md`, `PROJECT_CONTEXT.md` | ✅ 완료 |
 
 ---
 

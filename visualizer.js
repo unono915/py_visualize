@@ -119,6 +119,7 @@ function cacheDom() {
   dom.engineStatus = document.getElementById("engineStatus");
   dom.exampleStrip = document.getElementById("exampleStrip");
   dom.runButton = document.getElementById("runButton");
+  dom.stepRunButton = document.getElementById("stepRunButton");
   dom.resetButton = document.getElementById("resetButton");
   dom.loadingOverlay = document.getElementById("loadingOverlay");
   dom.loadMessage = document.getElementById("loadMessage");
@@ -155,6 +156,7 @@ function bindEvents() {
   dom.codeInput.addEventListener("keydown", handleEditorKeydown);
   window.addEventListener("resize", handleSceneResize);
   dom.runButton.addEventListener("click", () => executeCode());
+  dom.stepRunButton.addEventListener("click", () => executeCode({ initialStepIndex: 0 }));
   dom.resetButton.addEventListener("click", resetWorkspace);
   dom.retryLoadButton.addEventListener("click", startLoad);
   dom.submitInputButton.addEventListener("click", submitInput);
@@ -325,11 +327,13 @@ import types
     setLoadProgress(100, "준비 완료!");
     setEngineStatus("엔진 준비 완료", "ready");
     dom.runButton.disabled = false;
+    dom.stepRunButton.disabled = false;
     await wait(260);
     dom.loadingOverlay.hidden = true;
     await maybeRunAutotest();
   } catch (error) {
     dom.runButton.disabled = true;
+    dom.stepRunButton.disabled = true;
     setEngineStatus("엔진 로드 실패", "error");
     dom.loadError.hidden = false;
     dom.loadError.textContent = formatJavascriptError(error);
@@ -348,7 +352,7 @@ function setEngineStatus(label, tone) {
   dom.engineStatus.className = `status-pill status-${tone}`;
 }
 
-async function executeCode() {
+async function executeCode(options = {}) {
   if (!state.pyodide || state.isRunning) {
     return null;
   }
@@ -361,6 +365,7 @@ async function executeCode() {
   clearStepExplorer();
   state.isRunning = true;
   dom.runButton.disabled = true;
+  dom.stepRunButton.disabled = true;
   setEngineStatus("코드 실행 중", "running");
 
   try {
@@ -370,7 +375,7 @@ async function executeCode() {
     renderConsole(result.stdout, result.error || result.stderr);
 
     if (Array.isArray(result.steps) && result.steps.length) {
-      setupStepExplorer(result, source);
+      setupStepExplorer(result, source, options);
     } else {
       renderVariables(result.variables);
     }
@@ -386,10 +391,11 @@ async function executeCode() {
   } finally {
     state.isRunning = false;
     dom.runButton.disabled = false;
+    dom.stepRunButton.disabled = false;
   }
 }
 
-function setupStepExplorer(result, source) {
+function setupStepExplorer(result, source, options = {}) {
   state.executionSteps = result.steps;
   state.stepDiffs = buildStepDiffs(result.steps);
   state.stepsTruncated = Boolean(result.steps_truncated);
@@ -400,8 +406,10 @@ function setupStepExplorer(result, source) {
   dom.stepRange.max = String(Math.max(0, state.executionSteps.length - 1));
   dom.stepTruncatedNote.hidden = !state.stepsTruncated;
 
-  const requestedStep = getRequestedStepIndex(state.executionSteps.length);
-  const initialIndex = requestedStep ?? state.executionSteps.length - 1;
+  const explicitInitialStep = Number.isInteger(options.initialStepIndex) ? options.initialStepIndex : null;
+  const requestedStep = explicitInitialStep === null ? getRequestedStepIndex(state.executionSteps.length) : null;
+  const initialIndex =
+    explicitInitialStep ?? requestedStep ?? state.executionSteps.length - 1;
   selectStep(initialIndex);
 }
 
