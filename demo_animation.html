@@ -1,0 +1,1027 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>🎬 Animation Demo — Python Visualizer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Gaegu:wght@400;700&family=Gowun+Dodum&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --mint: #4cb9ad;
+      --mint-light: rgba(76,185,173,0.15);
+      --mint-deep: #41aa9d;
+      --text-main: #213547;
+      --text-soft: #5d7388;
+      --shadow: 0 20px 60px rgba(92,143,173,0.18);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Gowun Dodum', sans-serif;
+      color: var(--text-main);
+      background:
+        radial-gradient(circle at top left, rgba(255,231,184,0.75), transparent 28%),
+        radial-gradient(circle at 85% 15%, rgba(168,228,220,0.55), transparent 22%),
+        linear-gradient(180deg, #eef8ff 0%, #fdfcff 48%, #fffaf2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    /* ── Header ── */
+    .header {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .header h1 {
+      font-family: 'Gaegu', cursive;
+      font-size: 2.4rem;
+      color: var(--text-main);
+    }
+    .header p {
+      color: var(--text-soft);
+      margin-top: 6px;
+    }
+    .demo-badge {
+      display: inline-block;
+      background: linear-gradient(135deg, #4cb9ad, #6ec9be);
+      color: #fff;
+      padding: 4px 14px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      margin-bottom: 8px;
+    }
+
+    /* ── Workspace ── */
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 48fr) minmax(0, 52fr);
+      gap: 20px;
+      max-width: 1300px;
+      margin: 0 auto;
+      position: relative;
+    }
+
+    /* SVG overlay for connection lines */
+    #connectionSvg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      overflow: visible;
+      z-index: 10;
+    }
+
+    .panel {
+      background: rgba(255,255,255,0.92);
+      border: 1px solid rgba(255,255,255,0.65);
+      border-radius: 28px;
+      padding: 22px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+    }
+
+    /* ── Code Editor Panel ── */
+    .editor-panel h2 {
+      font-family: 'Gaegu', cursive;
+      font-size: 1.5rem;
+    }
+    .panel-kicker {
+      color: var(--mint-deep);
+      font-size: 0.88rem;
+      letter-spacing: 0.06em;
+      margin-bottom: 4px;
+    }
+
+    .code-area {
+      margin-top: 16px;
+      background: #fffdf7;
+      border-radius: 20px;
+      border: 1px solid rgba(148,182,204,0.22);
+      overflow: hidden;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.95rem;
+    }
+    .code-line {
+      display: flex;
+      align-items: stretch;
+      position: relative;
+      transition: background 200ms;
+    }
+    .code-line-num {
+      min-width: 46px;
+      padding: 10px 12px 10px 10px;
+      text-align: right;
+      color: #97a7b5;
+      background: rgba(239,249,247,0.7);
+      border-right: 1px dashed rgba(148,182,204,0.25);
+      font-size: 0.88rem;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      position: relative;
+    }
+    .code-line-text {
+      padding: 10px 18px;
+      color: #22323e;
+      line-height: 1.6;
+      flex: 1;
+      white-space: pre;
+    }
+
+    .code-line.active .code-line-num {
+      color: var(--mint-deep);
+      font-weight: 700;
+      animation: lineHighlight 500ms ease-out;
+      box-shadow: inset 3px 0 0 var(--mint-deep);
+      background: rgba(200,245,240,0.9);
+    }
+    .code-line.active .code-line-text {
+      background: rgba(76,185,173,0.06);
+    }
+    @keyframes lineHighlight {
+      0% { background: rgba(76,185,173,0.5); }
+      100% { background: rgba(200,245,240,0.9); }
+    }
+
+    .code-line-pointer {
+      position: absolute;
+      right: -2px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 10px;
+      height: 10px;
+      background: var(--mint);
+      border-radius: 50%;
+      opacity: 0;
+      transition: opacity 200ms;
+      z-index: 11;
+    }
+    .code-line.active .code-line-pointer {
+      opacity: 1;
+      animation: pointerPulse 1s ease-in-out infinite;
+    }
+    @keyframes pointerPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(76,185,173,0.6); }
+      50% { box-shadow: 0 0 0 8px rgba(76,185,173,0); }
+    }
+
+    /* ── Controls ── */
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 18px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      min-height: 44px;
+      padding: 0 20px;
+      border: none;
+      border-radius: 16px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.95rem;
+      transition: transform 160ms ease, box-shadow 160ms ease;
+    }
+    .btn:hover { transform: translateY(-2px); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+    .btn-primary {
+      background: linear-gradient(135deg, #4cb9ad, #6ec9be);
+      color: #fff;
+      box-shadow: 0 8px 24px rgba(76,185,173,0.3);
+    }
+    .btn-secondary {
+      background: linear-gradient(135deg, #f9edf2, #fff6d8);
+      color: var(--text-main);
+    }
+    .step-indicator {
+      color: var(--text-soft);
+      font-size: 0.9rem;
+      margin-left: auto;
+    }
+
+    /* ── Step Description ── */
+    .step-desc {
+      margin-top: 14px;
+      padding: 14px 18px;
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(76,185,173,0.08), rgba(255,243,198,0.15));
+      border: 1px solid rgba(76,185,173,0.2);
+      font-size: 0.92rem;
+      color: var(--text-main);
+      min-height: 52px;
+      line-height: 1.6;
+      transition: all 300ms;
+    }
+    .step-desc .action-type {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      margin-right: 6px;
+    }
+    .action-create { background: #c6f6d5; color: #276749; }
+    .action-update { background: #feebc8; color: #744210; }
+    .action-read { background: #bee3f8; color: #2a69ac; }
+    .action-input { background: #e9d8fd; color: #553c9a; }
+    .action-print { background: #fed7e2; color: #97266d; }
+
+    /* ── Variable Panel ── */
+    .visual-panel h2 {
+      font-family: 'Gaegu', cursive;
+      font-size: 1.5rem;
+    }
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .count-pill {
+      background: rgba(255,255,255,0.85);
+      border: 1px solid rgba(136,170,193,0.24);
+      border-radius: 999px;
+      padding: 6px 14px;
+      font-size: 0.9rem;
+    }
+
+    .var-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 14px;
+      min-height: 200px;
+      align-content: start;
+    }
+
+    /* ── Variable Cards ── */
+    .var-card {
+      position: relative;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 12px;
+      padding: 16px;
+      border: 2px solid;
+      border-radius: 22px;
+      background: #fff;
+      box-shadow: 0 14px 28px rgba(124,152,177,0.12);
+    }
+    .var-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .var-name {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 12px;
+      min-height: 32px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.9);
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.92rem;
+    }
+    .type-tag {
+      padding: 0 10px;
+      min-height: 26px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.78);
+      font-size: 0.82rem;
+      display: flex;
+      align-items: center;
+    }
+    .var-value {
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(255,255,255,0.72);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      word-break: break-word;
+      line-height: 1.6;
+    }
+
+    /* Type colors */
+    .type-str  { background:#fff5f5; border-color:#fc8181; color:#c53030; }
+    .type-int  { background:#ebf8ff; border-color:#4299e1; color:#2b6cb0; }
+    .type-float{ background:#fffff0; border-color:#ecc94b; color:#975a16; }
+    .type-bool { background:#f0fff4; border-color:#48bb78; color:#276749; }
+    .type-none { background:#f7fafc; border-color:#a0aec0; color:#718096; }
+    .type-list { background:#faf5ff; border-color:#9f7aea; color:#553c9a; }
+
+    /* ── Lifecycle Animations ── */
+    @keyframes varCreate {
+      0%   { opacity:0; transform: scale(0) rotate(-10deg); filter: blur(6px); }
+      55%  { opacity:1; transform: scale(1.12) rotate(2deg); filter: blur(0); }
+      78%  { transform: scale(0.97) rotate(-0.5deg); }
+      100% { opacity:1; transform: scale(1) rotate(0); }
+    }
+    @keyframes createGlow {
+      0%   { box-shadow: 0 0 0 0 rgba(76,185,173,0.7); }
+      60%  { box-shadow: 0 0 30px 10px rgba(76,185,173,0.2); }
+      100% { box-shadow: 0 14px 28px rgba(124,152,177,0.12); }
+    }
+    @keyframes varUpdate {
+      0%,100% { box-shadow: 0 14px 28px rgba(124,152,177,0.12); }
+      40% { box-shadow: 0 0 0 12px rgba(246,173,85,0.3), 0 14px 28px rgba(124,152,177,0.12); }
+    }
+    @keyframes valueFlash {
+      0%   { background-color: rgba(255,230,120,0.7); }
+      100% { background-color: rgba(255,255,255,0.72); }
+    }
+    @keyframes badgePop {
+      0%   { transform: scale(0) rotate(-20deg); opacity: 0; }
+      60%  { transform: scale(1.25) rotate(5deg); opacity: 1; }
+      100% { transform: scale(1) rotate(0); opacity: 1; }
+    }
+    @keyframes badgeFade {
+      0%   { opacity: 1; }
+      100% { opacity: 0; transform: translateY(-6px); }
+    }
+
+    .var-card.anim-create {
+      animation: varCreate 540ms cubic-bezier(0.34, 1.56, 0.64, 1) both,
+                 createGlow 800ms ease-out both;
+    }
+    .var-card.anim-update {
+      animation: varUpdate 700ms ease-out;
+    }
+    .var-card.anim-update .var-value {
+      animation: valueFlash 900ms ease-out;
+    }
+
+    .var-badge {
+      position: absolute;
+      top: -11px; right: -8px;
+      padding: 3px 11px;
+      border-radius: 999px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: 0.04em;
+      z-index: 3;
+      pointer-events: none;
+    }
+    .badge-new {
+      background: linear-gradient(135deg, #48bb78, #38a169);
+      color: #fff;
+      box-shadow: 0 3px 10px rgba(72,187,120,0.4);
+      animation: badgePop 400ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    }
+    .badge-changed {
+      background: linear-gradient(135deg, #f6ad55, #ed8936);
+      color: #fff;
+      box-shadow: 0 3px 10px rgba(246,173,85,0.4);
+      animation: badgePop 400ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    }
+
+    /* ── SVG Connection Lines ── */
+    .conn-line {
+      stroke-width: 2.5;
+      fill: none;
+      stroke-dasharray: 6 4;
+    }
+    .conn-create { stroke: #48bb78; stroke-dasharray: none; }
+    .conn-update { stroke: #f6ad55; stroke-dasharray: none; }
+    .conn-read   { stroke: #4299e1; stroke-dasharray: 6 4; }
+    .conn-arrow  { fill: none; }
+
+    @keyframes drawLine {
+      from { stroke-dashoffset: 300; opacity: 0; }
+      to   { stroke-dashoffset: 0; opacity: 1; }
+    }
+    .line-draw {
+      stroke-dasharray: 300;
+      stroke-dashoffset: 300;
+      animation: drawLine 450ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    }
+
+    /* ── Input Modal ── */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background: rgba(242,249,255,0.76);
+      backdrop-filter: blur(8px);
+      z-index: 50;
+    }
+    .modal-card {
+      width: min(100%, 440px);
+      padding: 28px;
+      border-radius: 28px;
+      background: rgba(255,255,255,0.97);
+      box-shadow: var(--shadow);
+      animation: varCreate 400ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    }
+    .modal-card h3 { font-family: 'Gaegu', cursive; font-size: 1.4rem; margin-bottom: 8px; }
+    .modal-card p  { color: var(--text-soft); font-size: 0.92rem; margin-bottom: 14px; }
+    .modal-input {
+      width: 100%;
+      min-height: 48px;
+      padding: 0 16px;
+      border: 1.5px solid rgba(136,170,193,0.3);
+      border-radius: 16px;
+      font-family: inherit;
+      font-size: 1rem;
+      outline: none;
+      margin-bottom: 14px;
+    }
+    .modal-input:focus {
+      border-color: rgba(76,185,173,0.6);
+      box-shadow: 0 0 0 4px rgba(76,185,173,0.12);
+    }
+
+    /* ── Flying Token (Input Flow) ── */
+    .flow-token {
+      position: fixed;
+      z-index: 100;
+      padding: 8px 18px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #9f7aea, #6b46c1);
+      color: #fff;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      font-weight: 600;
+      box-shadow: 0 8px 24px rgba(159,122,234,0.45);
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    /* ── Console ── */
+    .console-area {
+      margin-top: 14px;
+      background: #19222b;
+      border-radius: 18px;
+      padding: 14px 18px;
+      min-height: 60px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.88rem;
+    }
+    .console-line {
+      color: #9fe5bd;
+      white-space: pre-wrap;
+      animation: consoleFade 400ms ease-out;
+    }
+    .console-placeholder { color: #55687a; }
+    @keyframes consoleFade {
+      from { opacity: 0; transform: translateX(-8px); }
+      to   { opacity: 1; transform: none; }
+    }
+
+    /* ── Empty state ── */
+    .empty-state {
+      display: grid;
+      place-items: center;
+      min-height: 180px;
+      border: 2px dashed rgba(123,213,200,0.35);
+      border-radius: 24px;
+      color: var(--text-soft);
+      font-size: 0.9rem;
+      text-align: center;
+      padding: 20px;
+      background: rgba(255,255,255,0.5);
+    }
+    .empty-state p { margin-top: 8px; }
+
+    /* ── Responsive ── */
+    @media (max-width: 900px) {
+      .workspace { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="demo-badge">🎬 Animation Concept Demo</div>
+  <h1>코드 실행 시각화 데모</h1>
+  <p>실제 구현 전 애니메이션 컨셉을 미리 확인합니다 — <strong>▶ 다음 단계</strong> 버튼을 눌러보세요!</p>
+</div>
+
+<div class="workspace">
+  <!-- SVG Connection Overlay -->
+  <svg id="connectionSvg"></svg>
+
+  <!-- LEFT: Code Editor -->
+  <div class="panel editor-panel">
+    <p class="panel-kicker">Code Editor</p>
+    <h2>파이썬 실습 공간</h2>
+
+    <div class="code-area" id="codeArea"></div>
+
+    <div class="controls">
+      <button class="btn btn-primary" id="nextBtn">▶ 다음 단계</button>
+      <button class="btn btn-secondary" id="resetBtn">🗑 처음부터</button>
+      <span class="step-indicator" id="stepIndicator">0 / 0 단계</span>
+    </div>
+
+    <div class="step-desc" id="stepDesc">
+      ▶ <strong>다음 단계</strong> 버튼을 눌러 코드를 한 줄씩 실행해보세요.
+    </div>
+
+    <p style="margin-top:10px; color:var(--text-soft); font-size:0.85rem;">콘솔 출력</p>
+    <div class="console-area" id="consoleArea">
+      <span class="console-placeholder">아직 출력이 없습니다.</span>
+    </div>
+  </div>
+
+  <!-- RIGHT: Variable Visualizer -->
+  <div class="panel visual-panel">
+    <div class="panel-header">
+      <div>
+        <p class="panel-kicker">Visualizer</p>
+        <h2>Global Frame</h2>
+      </div>
+      <span class="count-pill" id="varCount">0개 변수</span>
+    </div>
+    <div class="var-grid" id="varGrid">
+      <div class="empty-state">
+        <div>🐍</div>
+        <p>코드를 실행하면<br>변수 카드가 나타나요!</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Input Modal -->
+<div class="modal-backdrop" id="inputModal" style="display:none">
+  <div class="modal-card">
+    <p class="panel-kicker">Input Needed</p>
+    <h3 id="inputPromptText">입력값을 적어주세요</h3>
+    <p>파이썬의 <code>input()</code> 함수가 값을 기다리고 있습니다.</p>
+    <input class="modal-input" id="inputField" type="text" placeholder="여기에 입력 후 Enter" />
+    <div style="display:flex; justify-content:flex-end;">
+      <button class="btn btn-primary" id="inputSubmit">확인</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   DEMO DATA — 시뮬레이션용 코드 실행 스텝
+   ============================================================ */
+const SOURCE_CODE = [
+  { text: "name = 'Alice'",           indent: 0 },
+  { text: "age = 17",                 indent: 0 },
+  { text: "height = 163.5",           indent: 0 },
+  { text: "is_student = True",        indent: 0 },
+  { text: "city = input('도시: ')",   indent: 0 },
+  { text: "nums = [10, 20, 30]",      indent: 0 },
+  { text: "age = age + 1",            indent: 0 },
+  { text: "nums.append(40)",          indent: 0 },
+  { text: "print(name, age, city)",   indent: 0 },
+];
+
+const STEPS = [
+  {
+    line: 0,
+    desc: { type:'create', text: "<code>name</code> 변수가 생성됩니다 → 문자열 카드가 팝업!" },
+    create: [{ name:'name', type:'str', value:"'Alice'" }],
+    update: [], read: [], consoleLine: null,
+    inputPrompt: null,
+  },
+  {
+    line: 1,
+    desc: { type:'create', text: "<code>age</code> 변수가 생성됩니다 → 정수 카드가 팝업!" },
+    create: [{ name:'age', type:'int', value:'17' }],
+    update: [], read: [], consoleLine: null,
+    inputPrompt: null,
+  },
+  {
+    line: 2,
+    desc: { type:'create', text: "<code>height</code> 변수가 생성됩니다 → 실수 카드!" },
+    create: [{ name:'height', type:'float', value:'163.5' }],
+    update: [], read: [], consoleLine: null,
+    inputPrompt: null,
+  },
+  {
+    line: 3,
+    desc: { type:'create', text: "<code>is_student</code> 불리언 변수가 생성됩니다!" },
+    create: [{ name:'is_student', type:'bool', value:'True' }],
+    update: [], read: [], consoleLine: null,
+    inputPrompt: null,
+  },
+  {
+    line: 4,
+    desc: { type:'input', text: "<code>input()</code> 호출! 입력창이 열립니다. 입력값이 <code>city</code> 변수로 저장되는 흐름을 확인해보세요." },
+    create: [], update: [], read: [], consoleLine: null,
+    inputPrompt: '도시: ',
+    inputTarget: 'city',
+  },
+  {
+    line: 5,
+    desc: { type:'create', text: "<code>nums</code> 리스트가 생성됩니다 → 아이템이 나열되는 카드!" },
+    create: [{ name:'nums', type:'list', value:'[10, 20, 30]' }],
+    update: [], read: [], consoleLine: null,
+    inputPrompt: null,
+  },
+  {
+    line: 6,
+    desc: { type:'update', text: "<code>age</code> 값이 17 → 18로 변경됩니다! 카드가 반짝입니다." },
+    create: [], update: [{ name:'age', value:'18' }], read:['age'], consoleLine: null,
+    inputPrompt: null,
+  },
+  {
+    line: 7,
+    desc: { type:'update', text: "<code>nums</code> 리스트에 40이 추가됩니다. 리스트 카드가 업데이트!" },
+    create: [], update: [{ name:'nums', value:'[10, 20, 30, 40]' }], read:['nums'], consoleLine: null,
+    inputPrompt: null,
+  },
+  {
+    line: 8,
+    desc: { type:'print', text: "<code>print(name, age, city)</code> — 3개 변수를 읽어 콘솔에 출력합니다. 연결선을 확인하세요!" },
+    create: [], update: [], read:['name','age','city'], consoleLine: null, // set dynamically
+    inputPrompt: null,
+  },
+];
+
+/* ============================================================
+   STATE
+   ============================================================ */
+const state = {
+  stepIndex: -1,
+  variables: {},   // name → { type, value, el }
+  consoleLines: [],
+  inputResolve: null,
+  cityValue: '서울',
+};
+
+/* ============================================================
+   DOM SETUP
+   ============================================================ */
+const codeArea      = document.getElementById('codeArea');
+const nextBtn       = document.getElementById('nextBtn');
+const resetBtn      = document.getElementById('resetBtn');
+const stepIndicator = document.getElementById('stepIndicator');
+const stepDesc      = document.getElementById('stepDesc');
+const varGrid       = document.getElementById('varGrid');
+const varCountEl    = document.getElementById('varCount');
+const consoleArea   = document.getElementById('consoleArea');
+const inputModal    = document.getElementById('inputModal');
+const inputField    = document.getElementById('inputField');
+const inputSubmit   = document.getElementById('inputSubmit');
+const inputPromptText = document.getElementById('inputPromptText');
+const svg           = document.getElementById('connectionSvg');
+
+/* Render code lines */
+SOURCE_CODE.forEach((row, i) => {
+  const lineEl = document.createElement('div');
+  lineEl.className = 'code-line';
+  lineEl.id = `line-${i}`;
+  lineEl.innerHTML = `
+    <div class="code-line-num" id="linenum-${i}">
+      ${i+1}
+      <div class="code-line-pointer"></div>
+    </div>
+    <div class="code-line-text">${escHtml(row.text)}</div>
+  `;
+  codeArea.appendChild(lineEl);
+});
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+/* ============================================================
+   MAIN STEP HANDLER
+   ============================================================ */
+async function runNextStep() {
+  state.stepIndex++;
+  if (state.stepIndex >= STEPS.length) return;
+
+  const step = STEPS[state.stepIndex];
+  nextBtn.disabled = true;
+
+  /* 1. Highlight code line */
+  document.querySelectorAll('.code-line.active').forEach(el => el.classList.remove('active'));
+  const lineEl = document.getElementById(`line-${step.line}`);
+  lineEl?.classList.add('active');
+
+  /* 2. Update step indicator & description */
+  stepIndicator.textContent = `${state.stepIndex + 1} / ${STEPS.length} 단계`;
+  const typeMap = { create:'action-create', update:'action-update', read:'action-read', input:'action-input', print:'action-print' };
+  const labelMap = { create:'✨ 변수 생성', update:'🔄 값 변경', read:'👁 읽기', input:'⌨ 입력', print:'🖨 출력' };
+  stepDesc.innerHTML = `<span class="action-type ${typeMap[step.desc.type]}">${labelMap[step.desc.type]}</span>${step.desc.text}`;
+
+  /* 3. Handle input() */
+  if (step.inputPrompt !== null) {
+    const value = await showInput(step.inputPrompt, step.inputTarget);
+    state.cityValue = value || '서울';
+
+    // Animate value flowing into new variable card
+    await animateInputFlow(value || '서울', step.inputTarget);
+
+    // Create city variable card
+    createVarCard('city', 'str', `'${value || '서울'}'`);
+    await wait(800);
+    nextBtn.disabled = false;
+    return;
+  }
+
+  /* 4. Clear old connections */
+  clearConnections();
+  await wait(180);
+
+  /* 5. Create new variable cards */
+  for (const v of step.create) {
+    await wait(120);
+    createVarCard(v.name, v.type, v.value);
+    await wait(350);
+    drawConnection(`line-${step.line}`, `card-${v.name}`, 'create');
+    await wait(200);
+  }
+
+  /* 6. Update existing variable cards */
+  for (const v of step.update) {
+    await wait(120);
+    updateVarCard(v.name, v.value);
+    await wait(350);
+    drawConnection(`line-${step.line}`, `card-${v.name}`, 'update');
+    await wait(200);
+  }
+
+  /* 7. Draw read connections */
+  for (const name of (step.read || [])) {
+    await wait(100);
+    drawConnection(`line-${step.line}`, `card-${name}`, 'read');
+    await wait(150);
+  }
+
+  /* 8. Console output */
+  if (step.line === 8) {
+    // print step — show output dynamically
+    const line = `Alice 18 ${state.cityValue}`;
+    appendConsole(line);
+  }
+
+  await wait(600);
+  nextBtn.disabled = (state.stepIndex >= STEPS.length - 1);
+}
+
+/* ============================================================
+   VARIABLE CARD MANAGEMENT
+   ============================================================ */
+function createVarCard(name, type, value) {
+  // Remove empty state if present
+  const empty = varGrid.querySelector('.empty-state');
+  if (empty) varGrid.removeChild(empty);
+
+  const card = document.createElement('div');
+  card.className = `var-card type-${type} anim-create`;
+  card.id = `card-${name}`;
+  card.dataset.name = name;
+
+  const badge = document.createElement('div');
+  badge.className = 'var-badge badge-new';
+  badge.textContent = 'NEW';
+
+  card.innerHTML = `
+    <div class="var-card-header">
+      <div class="var-name">📦 ${name}</div>
+      <div class="type-tag">${type}</div>
+    </div>
+    <div class="var-value" id="val-${name}">${escHtml(value)}</div>
+  `;
+  card.appendChild(badge);
+  varGrid.appendChild(card);
+
+  state.variables[name] = { type, value, el: card };
+  updateVarCount();
+
+  // Remove badge after 2.5s
+  setTimeout(() => {
+    badge.style.animation = 'badgeFade 400ms ease-out forwards';
+    setTimeout(() => badge.remove(), 400);
+  }, 2500);
+}
+
+function updateVarCard(name, newValue) {
+  const entry = state.variables[name];
+  if (!entry) return;
+
+  const card = entry.el;
+  card.classList.remove('anim-update', 'anim-create');
+  // Force reflow
+  void card.offsetWidth;
+  card.classList.add('anim-update');
+
+  const valEl = document.getElementById(`val-${name}`);
+  if (valEl) valEl.textContent = newValue;
+
+  // Add CHANGED badge
+  const prev = card.querySelector('.var-badge');
+  if (prev) prev.remove();
+  const badge = document.createElement('div');
+  badge.className = 'var-badge badge-changed';
+  badge.textContent = 'CHANGED';
+  card.appendChild(badge);
+
+  entry.value = newValue;
+  setTimeout(() => {
+    badge.style.animation = 'badgeFade 400ms ease-out forwards';
+    setTimeout(() => badge.remove(), 400);
+  }, 2500);
+}
+
+function updateVarCount() {
+  varCountEl.textContent = `${Object.keys(state.variables).length}개 변수`;
+}
+
+/* ============================================================
+   SVG CONNECTION LINES
+   ============================================================ */
+function clearConnections() {
+  svg.innerHTML = '';
+}
+
+function drawConnection(fromId, toId, type) {
+  const fromEl = document.querySelector(`#${fromId} .code-line-pointer`)
+               || document.getElementById(fromId);
+  const toEl = document.getElementById(toId);
+  if (!fromEl || !toEl) return;
+
+  const workspace = document.querySelector('.workspace');
+  const wsRect = workspace.getBoundingClientRect();
+  const fromRect = fromEl.getBoundingClientRect();
+  const toRect = toEl.getBoundingClientRect();
+
+  // Start: right edge of line number pointer
+  const x1 = fromRect.right - wsRect.left;
+  const y1 = fromRect.top + fromRect.height / 2 - wsRect.top;
+
+  // End: left edge of variable card, vertical center
+  const x2 = toRect.left - wsRect.left;
+  const y2 = toRect.top + toRect.height / 2 - wsRect.top;
+
+  // Cubic bezier control points
+  const cx1 = x1 + (x2 - x1) * 0.55;
+  const cy1 = y1;
+  const cx2 = x2 - (x2 - x1) * 0.35;
+  const cy2 = y2;
+
+  const colorMap = { create:'#48bb78', update:'#f6ad55', read:'#4299e1' };
+  const dashMap  = { create:'none',    update:'none',    read:'6 4' };
+  const color = colorMap[type];
+  const dash  = dashMap[type];
+
+  // Arrow marker
+  const markerId = `arr-${type}-${Date.now()}`;
+  const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+  marker.setAttribute('id', markerId);
+  marker.setAttribute('markerWidth', '8');
+  marker.setAttribute('markerHeight', '8');
+  marker.setAttribute('refX', '6');
+  marker.setAttribute('refY', '3');
+  marker.setAttribute('orient', 'auto');
+  const arrowPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  arrowPath.setAttribute('d', 'M0,0 L0,6 L8,3 z');
+  arrowPath.setAttribute('fill', color);
+  marker.appendChild(arrowPath);
+
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  defs.appendChild(marker);
+  svg.appendChild(defs);
+
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  const d = `M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`;
+  path.setAttribute('d', d);
+  path.setAttribute('stroke', color);
+  path.setAttribute('stroke-width', '2.5');
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke-dasharray', dash);
+  path.setAttribute('marker-end', `url(#${markerId})`);
+  path.setAttribute('opacity', '0.85');
+
+  // Draw animation via stroke-dashoffset
+  const length = 350;
+  path.style.strokeDasharray = `${length}`;
+  path.style.strokeDashoffset = `${length}`;
+  path.style.transition = 'stroke-dashoffset 450ms cubic-bezier(0.4,0,0.2,1)';
+  svg.appendChild(path);
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      path.style.strokeDashoffset = '0';
+    });
+  });
+
+  // Fade out after 3s
+  setTimeout(() => {
+    path.style.transition = 'opacity 600ms ease';
+    path.style.opacity = '0';
+    setTimeout(() => path.remove(), 600);
+  }, 3000);
+}
+
+/* ============================================================
+   INPUT MODAL + FLOW ANIMATION
+   ============================================================ */
+function showInput(prompt, targetName) {
+  inputPromptText.textContent = prompt || '입력값을 적어주세요';
+  inputField.value = '';
+  inputModal.style.display = 'grid';
+  setTimeout(() => inputField.focus(), 50);
+
+  return new Promise(resolve => {
+    state.inputResolve = resolve;
+  });
+}
+
+function submitInput() {
+  if (!state.inputResolve) return;
+  const val = inputField.value.trim() || '서울';
+  state.inputResolve(val);
+  state.inputResolve = null;
+  inputModal.style.display = 'none';
+}
+
+inputSubmit.addEventListener('click', submitInput);
+inputField.addEventListener('keydown', e => { if (e.key === 'Enter') submitInput(); });
+
+async function animateInputFlow(value, targetName) {
+  // Create a floating token
+  const token = document.createElement('div');
+  token.className = 'flow-token';
+  token.textContent = `"${value}"`;
+  document.body.appendChild(token);
+
+  // Start position: near modal (center of screen)
+  const startX = window.innerWidth / 2 - 60;
+  const startY = window.innerHeight / 2 - 20;
+  token.style.left = startX + 'px';
+  token.style.top  = startY + 'px';
+
+  await wait(80);
+
+  // Get target position: variable grid area (right panel)
+  const varGridRect = varGrid.getBoundingClientRect();
+  const endX = varGridRect.left + 40;
+  const endY = varGridRect.top + 60;
+
+  token.style.transition = 'left 700ms cubic-bezier(0.34, 1.56, 0.64, 1), top 700ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 200ms ease 600ms, transform 700ms ease';
+  token.style.left = endX + 'px';
+  token.style.top  = endY + 'px';
+  token.style.transform = 'scale(0.7)';
+
+  await wait(700);
+  token.style.opacity = '0';
+  await wait(250);
+  token.remove();
+}
+
+/* ============================================================
+   CONSOLE
+   ============================================================ */
+function appendConsole(text) {
+  const placeholder = consoleArea.querySelector('.console-placeholder');
+  if (placeholder) placeholder.remove();
+  const line = document.createElement('div');
+  line.className = 'console-line';
+  line.textContent = text;
+  consoleArea.appendChild(line);
+  consoleArea.scrollTop = consoleArea.scrollHeight;
+}
+
+/* ============================================================
+   RESET
+   ============================================================ */
+function resetDemo() {
+  state.stepIndex = -1;
+  state.variables = {};
+  state.consoleLines = [];
+  state.cityValue = '서울';
+
+  document.querySelectorAll('.code-line.active').forEach(el => el.classList.remove('active'));
+  clearConnections();
+  varGrid.innerHTML = `
+    <div class="empty-state">
+      <div>🐍</div>
+      <p>코드를 실행하면<br>변수 카드가 나타나요!</p>
+    </div>`;
+  consoleArea.innerHTML = '<span class="console-placeholder">아직 출력이 없습니다.</span>';
+  stepIndicator.textContent = `0 / ${STEPS.length} 단계`;
+  stepDesc.innerHTML = '▶ <strong>다음 단계</strong> 버튼을 눌러 코드를 한 줄씩 실행해보세요.';
+  varCountEl.textContent = '0개 변수';
+  nextBtn.disabled = false;
+}
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/* ============================================================
+   EVENT BINDINGS
+   ============================================================ */
+nextBtn.addEventListener('click', runNextStep);
+resetBtn.addEventListener('click', resetDemo);
+
+// Recalculate connections on resize
+window.addEventListener('resize', clearConnections);
+</script>
+</body>
+</html>

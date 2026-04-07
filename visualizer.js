@@ -80,10 +80,14 @@ const PYODIDE_INDEX = "https://cdn.jsdelivr.net/pyodide/v0.26.2/full/";
 const state = {
   pyodide: null,
   isRunning: false,
+  isPlaying: false,
   inputResolve: null,
   activeExampleId: DEFAULT_EXAMPLE_ID,
   autoInputs: [],
   executionSteps: [],
+  stepDiffs: [],
+  playSpeed: 900,
+  playTimerId: null,
   currentStepIndex: -1,
   currentSourceLines: [],
   stepsTruncated: false,
@@ -104,9 +108,12 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function cacheDom() {
+  dom.workspace = document.getElementById("workspace");
+  dom.connectionSvg = document.getElementById("connectionSvg");
   dom.codeInput = document.getElementById("codeInput");
   dom.lineNumbers = document.getElementById("lineNumbers");
   dom.consoleOutput = document.getElementById("consoleOutput");
+  dom.visualizationStage = document.getElementById("visualizationStage");
   dom.visualizationGrid = document.getElementById("visualizationGrid");
   dom.variableCount = document.getElementById("variableCount");
   dom.engineStatus = document.getElementById("engineStatus");
@@ -129,10 +136,13 @@ function cacheDom() {
   dom.prevStepButton = document.getElementById("prevStepButton");
   dom.nextStepButton = document.getElementById("nextStepButton");
   dom.lastStepButton = document.getElementById("lastStepButton");
+  dom.playPauseButton = document.getElementById("playPauseButton");
+  dom.playbackSpeed = document.getElementById("playbackSpeed");
   dom.stepRange = document.getElementById("stepRange");
   dom.stepLineBadge = document.getElementById("stepLineBadge");
   dom.stepPhaseText = document.getElementById("stepPhaseText");
   dom.stepLineText = document.getElementById("stepLineText");
+  dom.sceneCodeLine = document.getElementById("sceneCodeLine");
   dom.frameStack = document.getElementById("frameStack");
   dom.activeLocals = document.getElementById("activeLocals");
   dom.stepTruncatedNote = document.getElementById("stepTruncatedNote");
@@ -143,16 +153,19 @@ function bindEvents() {
   dom.codeInput.addEventListener("input", handleCodeInput);
   dom.codeInput.addEventListener("scroll", syncLineNumbers);
   dom.codeInput.addEventListener("keydown", handleEditorKeydown);
+  window.addEventListener("resize", handleSceneResize);
   dom.runButton.addEventListener("click", () => executeCode());
   dom.resetButton.addEventListener("click", resetWorkspace);
   dom.retryLoadButton.addEventListener("click", startLoad);
   dom.submitInputButton.addEventListener("click", submitInput);
-  dom.firstStepButton.addEventListener("click", () => selectStep(0));
-  dom.prevStepButton.addEventListener("click", () => selectStep(state.currentStepIndex - 1));
-  dom.nextStepButton.addEventListener("click", () => selectStep(state.currentStepIndex + 1));
-  dom.lastStepButton.addEventListener("click", () => selectStep(state.executionSteps.length - 1));
+  dom.playPauseButton.addEventListener("click", togglePlayback);
+  dom.playbackSpeed.addEventListener("change", handlePlaybackSpeedChange);
+  dom.firstStepButton.addEventListener("click", () => navigateToStep(0));
+  dom.prevStepButton.addEventListener("click", () => navigateToStep(state.currentStepIndex - 1));
+  dom.nextStepButton.addEventListener("click", () => navigateToStep(state.currentStepIndex + 1));
+  dom.lastStepButton.addEventListener("click", () => navigateToStep(state.executionSteps.length - 1));
   dom.stepRange.addEventListener("input", (event) => {
-    selectStep(Number(event.target.value));
+    navigateToStep(Number(event.target.value));
   });
   dom.inputField.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
@@ -172,6 +185,7 @@ function renderExampleButtons() {
     button.dataset.exampleId = example.id;
     button.textContent = example.label;
     button.addEventListener("click", () => {
+      stopPlayback();
       state.activeExampleId = example.id;
       dom.codeInput.value = example.code;
       persistDraft(example.code);
@@ -239,6 +253,7 @@ function getHighlightedLine() {
 
 function syncLineNumbers() {
   dom.lineNumbers.scrollTop = dom.codeInput.scrollTop;
+  redrawSceneConnections();
 }
 
 function handleEditorKeydown(event) {
@@ -263,6 +278,7 @@ function insertAtCursor(text) {
 }
 
 function resetWorkspace() {
+  stopPlayback();
   dom.codeInput.value = "";
   dom.codeInput.focus();
   localStorage.removeItem(STORAGE_KEY);
@@ -337,6 +353,7 @@ async function executeCode() {
     return null;
   }
 
+  stopPlayback();
   const source = dom.codeInput.value;
   state.currentSourceLines = source.split("\n");
   state.lastExecutedSource = source;
@@ -374,6 +391,7 @@ async function executeCode() {
 
 function setupStepExplorer(result, source) {
   state.executionSteps = result.steps;
+  state.stepDiffs = buildStepDiffs(result.steps);
   state.stepsTruncated = Boolean(result.steps_truncated);
   state.currentSourceLines = source.split("\n");
 
@@ -388,7 +406,9 @@ function setupStepExplorer(result, source) {
 }
 
 function clearStepExplorer() {
+  stopPlayback();
   state.executionSteps = [];
+  state.stepDiffs = [];
   state.currentStepIndex = -1;
   state.stepsTruncated = false;
 
@@ -400,10 +420,17 @@ function clearStepExplorer() {
   dom.stepLineBadge.textContent = "0행";
   dom.stepPhaseText.textContent = "실행 기록 없음";
   dom.stepLineText.textContent = "코드를 실행하면 각 줄이 끝날 때마다 변수 변화가 기록됩니다.";
+  resetSceneCodeLine();
   dom.frameStack.innerHTML = "";
   dom.activeLocals.innerHTML = "";
   dom.stepTruncatedNote.hidden = true;
+  updatePlayControls();
   updateLineNumbers();
+}
+
+function navigateToStep(index) {
+  stopPlayback();
+  selectStep(index);
 }
 
 function selectStep(index) {
@@ -420,11 +447,13 @@ function selectStep(index) {
   dom.stepLineBadge.textContent = `${snapshot.line}행`;
   dom.stepPhaseText.textContent = `${snapshot.frame_label} 실행 후`;
   dom.stepLineText.textContent = getSourceLine(snapshot.line);
+  updateLineNumbers();
+  renderSceneCodeLine(snapshot, state.stepDiffs[safeIndex] || null);
   renderFrameStack(snapshot.frames || []);
   renderActiveLocals(snapshot.active_locals || [], snapshot.frame_label);
-  renderVariables(snapshot.globals || []);
+  renderVariables(snapshot.globals || [], state.stepDiffs[safeIndex] || null);
   updateStepControls();
-  updateLineNumbers();
+  redrawSceneConnections();
 }
 
 function updateStepControls() {
@@ -432,11 +461,74 @@ function updateStepControls() {
   const isFirst = state.currentStepIndex <= 0;
   const isLast = state.currentStepIndex >= state.executionSteps.length - 1;
 
+  dom.playPauseButton.disabled = !hasSteps;
   dom.firstStepButton.disabled = !hasSteps || isFirst;
   dom.prevStepButton.disabled = !hasSteps || isFirst;
   dom.nextStepButton.disabled = !hasSteps || isLast;
   dom.lastStepButton.disabled = !hasSteps || isLast;
   dom.stepRange.disabled = !hasSteps;
+  dom.playbackSpeed.disabled = !hasSteps;
+  updatePlayControls();
+}
+
+function updatePlayControls() {
+  const canPlay = state.executionSteps.length > 0;
+  dom.playPauseButton.textContent = state.isPlaying ? "⏸ 일시정지" : "▶ 재생";
+  dom.playPauseButton.classList.toggle("is-playing", state.isPlaying);
+  dom.playPauseButton.disabled = !canPlay;
+}
+
+function handlePlaybackSpeedChange(event) {
+  const parsed = Number(event.target.value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return;
+  }
+  state.playSpeed = parsed;
+}
+
+function togglePlayback() {
+  if (!state.executionSteps.length) {
+    return;
+  }
+
+  if (state.isPlaying) {
+    stopPlayback();
+    return;
+  }
+
+  if (state.currentStepIndex >= state.executionSteps.length - 1 || state.currentStepIndex < 0) {
+    selectStep(0);
+  }
+
+  state.isPlaying = true;
+  updatePlayControls();
+  scheduleNextPlaybackStep();
+}
+
+function scheduleNextPlaybackStep() {
+  if (!state.isPlaying) {
+    return;
+  }
+
+  if (state.currentStepIndex >= state.executionSteps.length - 1) {
+    stopPlayback();
+    return;
+  }
+
+  state.playTimerId = window.setTimeout(() => {
+    selectStep(state.currentStepIndex + 1);
+    scheduleNextPlaybackStep();
+  }, state.playSpeed);
+}
+
+function stopPlayback() {
+  if (state.playTimerId !== null) {
+    window.clearTimeout(state.playTimerId);
+    state.playTimerId = null;
+  }
+
+  state.isPlaying = false;
+  updatePlayControls();
 }
 
 function renderFrameStack(frames) {
@@ -506,8 +598,12 @@ function buildLocalSummary(variable) {
   return `${variable.name} = ${variable.repr || "표시할 수 없는 값"}`;
 }
 
+function getRawSourceLine(lineNumber) {
+  return state.currentSourceLines[lineNumber - 1] ?? "";
+}
+
 function getSourceLine(lineNumber) {
-  const line = state.currentSourceLines[lineNumber - 1] ?? "";
+  const line = getRawSourceLine(lineNumber);
   const trimmed = line.trim();
 
   if (!trimmed) {
@@ -515,6 +611,176 @@ function getSourceLine(lineNumber) {
   }
 
   return `${lineNumber}행: ${trimmed}`;
+}
+
+function resetSceneCodeLine() {
+  if (!dom.sceneCodeLine) {
+    return;
+  }
+
+  dom.sceneCodeLine.innerHTML = "";
+
+  const badge = document.createElement("span");
+  badge.className = "scene-code-badge";
+  badge.textContent = "0행";
+
+  const text = document.createElement("div");
+  text.className = "scene-code-text";
+  text.textContent = "실행 중인 코드 줄이 여기에 나타납니다.";
+
+  dom.sceneCodeLine.append(badge, text);
+}
+
+function renderSceneCodeLine(snapshot, diff) {
+  if (!dom.sceneCodeLine) {
+    return;
+  }
+
+  const badge = document.createElement("span");
+  badge.className = "scene-code-badge";
+  badge.textContent = `${snapshot?.line ?? 0}행`;
+
+  const text = document.createElement("div");
+  text.className = "scene-code-text";
+
+  const parts = buildSceneLineParts(snapshot, diff);
+
+  if (!parts.length) {
+    text.textContent = "(빈 줄 또는 블록 경계)";
+  } else {
+    parts.forEach((part) => {
+      if (part.type === "ref") {
+        const span = document.createElement("span");
+        span.className = `scene-var-ref tone-${part.tone}`;
+        span.dataset.variableName = part.name;
+        span.dataset.tone = part.tone;
+        span.textContent = part.value;
+        text.appendChild(span);
+        return;
+      }
+
+      text.appendChild(document.createTextNode(part.value));
+    });
+  }
+
+  dom.sceneCodeLine.innerHTML = "";
+  dom.sceneCodeLine.append(badge, text);
+}
+
+function buildSceneLineParts(snapshot, diff) {
+  const lineText = getRawSourceLine(snapshot?.line);
+  if (!lineText) {
+    return [];
+  }
+
+  const variableNames = new Set((snapshot?.globals || []).map((variable) => variable.name));
+  const parts = [];
+  const seenCounts = new Map();
+  let cursor = 0;
+
+  while (cursor < lineText.length) {
+    const char = lineText[cursor];
+
+    if (char === "'" || char === '"') {
+      const stringToken = consumeQuotedText(lineText, cursor);
+      parts.push({ type: "text", value: stringToken.value });
+      cursor = stringToken.nextIndex;
+      continue;
+    }
+
+    if (/[A-Za-z_]/.test(char)) {
+      let end = cursor + 1;
+      while (end < lineText.length && /[A-Za-z0-9_]/.test(lineText[end])) {
+        end += 1;
+      }
+
+      const token = lineText.slice(cursor, end);
+      if (variableNames.has(token)) {
+        const occurrence = (seenCounts.get(token) || 0) + 1;
+        seenCounts.set(token, occurrence);
+        parts.push({
+          type: "ref",
+          name: token,
+          tone: getSceneTokenTone(token, diff, occurrence),
+          value: token,
+        });
+      } else {
+        parts.push({ type: "text", value: token });
+      }
+      cursor = end;
+      continue;
+    }
+
+    let end = cursor + 1;
+    while (end < lineText.length && !/[A-Za-z_'"]/.test(lineText[end])) {
+      end += 1;
+    }
+    parts.push({ type: "text", value: lineText.slice(cursor, end) });
+    cursor = end;
+  }
+
+  return mergeAdjacentTextParts(parts);
+}
+
+function consumeQuotedText(lineText, startIndex) {
+  const quote = lineText[startIndex];
+  let cursor = startIndex + 1;
+
+  while (cursor < lineText.length) {
+    if (lineText[cursor] === "\\" && cursor + 1 < lineText.length) {
+      cursor += 2;
+      continue;
+    }
+
+    if (lineText[cursor] === quote) {
+      cursor += 1;
+      break;
+    }
+
+    cursor += 1;
+  }
+
+  return {
+    value: lineText.slice(startIndex, cursor),
+    nextIndex: cursor,
+  };
+}
+
+function mergeAdjacentTextParts(parts) {
+  return parts.reduce((merged, part) => {
+    const last = merged[merged.length - 1];
+    if (part.type === "text" && last?.type === "text") {
+      last.value += part.value;
+      return merged;
+    }
+
+    merged.push(part);
+    return merged;
+  }, []);
+}
+
+function getSceneTokenTone(variableName, diff, occurrence) {
+  if (occurrence === 1 && diff?.created.includes(variableName)) {
+    return "create";
+  }
+
+  if (occurrence === 1 && diff?.updated.includes(variableName)) {
+    return "update";
+  }
+
+  return "read";
+}
+
+function handleSceneResize() {
+  if (!dom.visualizationGrid) {
+    return;
+  }
+
+  const cards = Array.from(dom.visualizationGrid.querySelectorAll(".var-card"));
+  if (cards.length) {
+    resolveSceneNodeCollisions(cards);
+  }
+  redrawSceneConnections();
 }
 
 function renderConsole(stdout, errorText) {
@@ -545,26 +811,302 @@ function renderConsole(stdout, errorText) {
   dom.consoleOutput.scrollTop = dom.consoleOutput.scrollHeight;
 }
 
-function renderVariables(variables) {
+function buildStepDiffs(steps) {
+  return steps.map((step, index) =>
+    diffStepVariables(index > 0 ? steps[index - 1]?.globals || [] : [], step?.globals || [])
+  );
+}
+
+function diffStepVariables(previousVariables, currentVariables) {
+  const previousMap = buildVariableLookup(previousVariables);
+  const currentMap = buildVariableLookup(currentVariables);
+  const created = [];
+  const updated = [];
+  const deleted = [];
+
+  currentMap.forEach((signature, name) => {
+    if (!previousMap.has(name)) {
+      created.push(name);
+      return;
+    }
+
+    if (previousMap.get(name) !== signature) {
+      updated.push(name);
+    }
+  });
+
+  previousMap.forEach((_, name) => {
+    if (!currentMap.has(name)) {
+      deleted.push(name);
+    }
+  });
+
+  return { created, updated, deleted };
+}
+
+function buildVariableLookup(variables) {
+  const lookup = new Map();
+
+  variables.forEach((variable) => {
+    lookup.set(variable.name, getVariableSignature(variable));
+  });
+
+  return lookup;
+}
+
+function getVariableSignature(variable) {
+  return JSON.stringify({
+    type: variable.type,
+    repr: variable.repr ?? null,
+    items: variable.items ?? null,
+    entries: variable.entries ?? null,
+    signature: variable.signature ?? null,
+    truncated: Boolean(variable.truncated),
+  });
+}
+
+function getVariableChangeTone(variableName, diff) {
+  if (!diff) {
+    return null;
+  }
+
+  if (diff.created.includes(variableName)) {
+    return "create";
+  }
+
+  if (diff.updated.includes(variableName)) {
+    return "update";
+  }
+
+  return null;
+}
+
+function renderVariables(variables, diff = null) {
   dom.variableCount.textContent = `${variables.length}개 변수`;
   dom.visualizationGrid.innerHTML = "";
+  clearConnections();
 
   if (!variables.length) {
     renderEmptyState();
     return;
   }
 
+  const layout = buildSceneLayout(variables);
+  const renderedCards = [];
+
   variables.forEach((variable, index) => {
     const card = document.createElement("article");
     const normalizedType = normalizeType(variable.type);
+    const changeTone = getVariableChangeTone(variable.name, diff);
+    const position = layout.get(variable.name) || { x: 50, y: 50 };
+    card.id = `var-node-${variable.name}`;
     card.className = "var-card";
     card.dataset.type = normalizedType;
-    card.style.transitionDelay = `${index * 70}ms`;
+    card.dataset.variableName = variable.name;
+    card.style.transitionDelay = `${index * 55}ms`;
+    card.style.setProperty("--node-x", `${position.x}%`);
+    card.style.setProperty("--node-y", `${position.y}%`);
+
+    if (changeTone === "create") {
+      card.classList.add("anim-create");
+      card.appendChild(createChangeBadge("NEW", "var-badge-new"));
+    } else if (changeTone === "update") {
+      card.classList.add("anim-update");
+      card.appendChild(createChangeBadge("CHANGED", "var-badge-changed"));
+    }
+
     card.appendChild(createCardHeader(variable, normalizedType));
     card.appendChild(createCardBody(variable, normalizedType));
     dom.visualizationGrid.appendChild(card);
+    renderedCards.push(card);
     requestAnimationFrame(() => card.classList.add("visible"));
   });
+
+  requestAnimationFrame(() => {
+    resolveSceneNodeCollisions(renderedCards);
+    redrawSceneConnections();
+  });
+}
+
+function buildSceneLayout(variables) {
+  const groups = new Map([
+    ["function", []],
+    ["mapping", []],
+    ["collection", []],
+    ["scalar", []],
+    ["other", []],
+  ]);
+
+  variables.forEach((variable) => {
+    const normalizedType = normalizeType(variable.type);
+    groups.get(getSceneGroupKey(normalizedType)).push({ variable, normalizedType });
+  });
+
+  const layout = new Map();
+  layoutSceneGroup(groups.get("function"), { xMin: 64, xMax: 88, yMin: 16, yMax: 26, columns: 2 }, layout);
+  layoutSceneGroup(groups.get("mapping"), { xMin: 24, xMax: 36, yMin: 28, yMax: 46, columns: 1 }, layout);
+  layoutSceneGroup(
+    groups.get("collection"),
+    { xMin: 56, xMax: 84, yMin: 42, yMax: 62, columns: 2 },
+    layout
+  );
+  layoutSceneGroup(groups.get("scalar"), { xMin: 18, xMax: 84, yMin: 70, yMax: 84, columns: 4 }, layout);
+  layoutSceneGroup(groups.get("other"), { xMin: 16, xMax: 40, yMin: 16, yMax: 30, columns: 1 }, layout);
+
+  return layout;
+}
+
+function getSceneGroupKey(normalizedType) {
+  if (normalizedType === "function") {
+    return "function";
+  }
+
+  if (normalizedType === "dict") {
+    return "mapping";
+  }
+
+  if (["list", "tuple", "set"].includes(normalizedType)) {
+    return "collection";
+  }
+
+  if (["str", "int", "float", "bool", "none"].includes(normalizedType)) {
+    return "scalar";
+  }
+
+  return "other";
+}
+
+function layoutSceneGroup(entries, area, layout) {
+  if (!entries.length) {
+    return;
+  }
+
+  const columns = Math.max(1, Math.min(area.columns, entries.length));
+  const rows = Math.ceil(entries.length / columns);
+  const spreadColumns = rows === 1 ? entries.length : columns;
+  const stepX = spreadColumns <= 1 ? 0 : (area.xMax - area.xMin) / (spreadColumns - 1);
+  const stepY = rows <= 1 ? 0 : (area.yMax - area.yMin) / (rows - 1);
+
+  entries.forEach((entry, index) => {
+    const column = rows === 1 ? index : index % columns;
+    const row = rows === 1 ? 0 : Math.floor(index / columns);
+    const seed = getNameSeed(entry.variable.name);
+    const x = (spreadColumns <= 1 ? (area.xMin + area.xMax) / 2 : area.xMin + column * stepX) + (seed - 0.5) * 3.5;
+    const y =
+      (rows <= 1 ? (area.yMin + area.yMax) / 2 : area.yMin + row * stepY) +
+      ((seed * 1.7) % 1 - 0.5) * 3;
+
+    layout.set(entry.variable.name, {
+      x: clamp(x, 10, 90),
+      y: clamp(y, 12, 88),
+    });
+  });
+}
+
+function resolveSceneNodeCollisions(cards) {
+  if (!cards.length || !dom.visualizationGrid) {
+    return;
+  }
+
+  const stageWidth = dom.visualizationGrid.clientWidth;
+  const stageHeight = dom.visualizationGrid.clientHeight;
+
+  if (!stageWidth || !stageHeight) {
+    return;
+  }
+
+  const padding = 18;
+  const nodes = cards.map((card, index) => {
+    const xPercent = parseFloat(card.style.getPropertyValue("--node-x")) || 50;
+    const yPercent = parseFloat(card.style.getPropertyValue("--node-y")) || 50;
+    return {
+      card,
+      index,
+      width: Math.max(card.offsetWidth, 120),
+      height: Math.max(card.offsetHeight, 56),
+      x: (stageWidth * xPercent) / 100,
+      y: (stageHeight * yPercent) / 100,
+      homeX: (stageWidth * xPercent) / 100,
+      homeY: (stageHeight * yPercent) / 100,
+    };
+  });
+
+  for (let pass = 0; pass < 42; pass += 1) {
+    let moved = false;
+
+    for (let index = 0; index < nodes.length; index += 1) {
+      const current = nodes[index];
+
+      for (let otherIndex = index + 1; otherIndex < nodes.length; otherIndex += 1) {
+        const other = nodes[otherIndex];
+        let dx = other.x - current.x;
+        let dy = other.y - current.y;
+        const minDx = (current.width + other.width) / 2 + padding;
+        const minDy = (current.height + other.height) / 2 + padding;
+
+        if (Math.abs(dx) >= minDx || Math.abs(dy) >= minDy) {
+          continue;
+        }
+
+        if (dx === 0 && dy === 0) {
+          dx = current.index <= other.index ? -0.5 : 0.5;
+          dy = current.index % 2 === 0 ? -0.5 : 0.5;
+        }
+
+        const overlapX = minDx - Math.abs(dx);
+        const overlapY = minDy - Math.abs(dy);
+
+        if (overlapX < overlapY) {
+          const push = overlapX / 2 + 1;
+          const direction = dx >= 0 ? 1 : -1;
+          current.x -= push * direction;
+          other.x += push * direction;
+        } else {
+          const push = overlapY / 2 + 1;
+          const direction = dy >= 0 ? 1 : -1;
+          current.y -= push * direction;
+          other.y += push * direction;
+        }
+
+        moved = true;
+      }
+    }
+
+    nodes.forEach((node) => {
+      node.x += (node.homeX - node.x) * 0.035;
+      node.y += (node.homeY - node.y) * 0.035;
+      node.x = clamp(node.x, node.width / 2 + 12, stageWidth - node.width / 2 - 12);
+      node.y = clamp(node.y, node.height / 2 + 10, stageHeight - node.height / 2 - 10);
+    });
+
+    if (!moved) {
+      break;
+    }
+  }
+
+  nodes.forEach((node) => {
+    node.card.style.setProperty("--node-x", `${(node.x / stageWidth) * 100}%`);
+    node.card.style.setProperty("--node-y", `${(node.y / stageHeight) * 100}%`);
+  });
+}
+
+function getNameSeed(name) {
+  let hash = 0;
+  for (const char of name) {
+    hash = (hash * 33 + char.charCodeAt(0)) % 997;
+  }
+  return hash / 997;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function createChangeBadge(label, toneClass) {
+  const badge = document.createElement("div");
+  badge.className = `var-badge ${toneClass}`;
+  badge.textContent = label;
+  return badge;
 }
 
 function createCardHeader(variable, normalizedType) {
@@ -609,14 +1151,14 @@ function createCardBody(variable, normalizedType) {
 function createSimpleValue(text) {
   const value = document.createElement("div");
   value.className = "simple-value";
-  value.textContent = text;
+  value.textContent = truncatePreview(text, 34);
   return value;
 }
 
 function createUnknownValue(text) {
   const value = document.createElement("div");
   value.className = "unknown-value";
-  value.textContent = text;
+  value.textContent = truncatePreview(text, 34);
   return value;
 }
 
@@ -625,7 +1167,7 @@ function createCollectionView(variable) {
   const strip = document.createElement("div");
   strip.className = "cell-strip";
 
-  (variable.items || []).forEach((item, index) => {
+  (variable.items || []).slice(0, 4).forEach((item, index) => {
     const cell = document.createElement("div");
     cell.className = "value-cell";
 
@@ -635,7 +1177,7 @@ function createCollectionView(variable) {
 
     const valueChip = document.createElement("div");
     valueChip.className = "value-chip";
-    valueChip.textContent = item;
+    valueChip.textContent = truncatePreview(item, 12);
 
     cell.append(indexChip, valueChip);
     strip.appendChild(cell);
@@ -655,33 +1197,25 @@ function createCollectionView(variable) {
 
 function createDictView(variable) {
   const wrapper = document.createElement("div");
-  const table = document.createElement("table");
-  table.className = "dict-table";
+  const entries = document.createElement("div");
+  entries.className = "dict-entries";
 
-  const headRow = document.createElement("tr");
-  ["Key", "Value"].forEach((text) => {
-    const th = document.createElement("th");
-    th.textContent = text;
-    headRow.appendChild(th);
+  (variable.entries || []).slice(0, 3).forEach((entry) => {
+    const chip = document.createElement("div");
+    chip.className = "dict-entry";
+
+    const key = document.createElement("span");
+    key.className = "dict-entry-key";
+    key.textContent = truncatePreview(entry.key, 10);
+
+    const value = document.createElement("span");
+    value.textContent = truncatePreview(entry.value, 14);
+
+    chip.append(key, value);
+    entries.appendChild(chip);
   });
 
-  const thead = document.createElement("thead");
-  thead.appendChild(headRow);
-  table.appendChild(thead);
-
-  const tbody = document.createElement("tbody");
-  (variable.entries || []).forEach((entry) => {
-    const row = document.createElement("tr");
-    const key = document.createElement("td");
-    const value = document.createElement("td");
-    key.textContent = entry.key;
-    value.textContent = entry.value;
-    row.append(key, value);
-    tbody.appendChild(row);
-  });
-
-  table.appendChild(tbody);
-  wrapper.appendChild(table);
+  wrapper.appendChild(entries);
 
   if (variable.truncated) {
     const note = document.createElement("p");
@@ -693,8 +1227,138 @@ function createDictView(variable) {
   return wrapper;
 }
 
+function truncatePreview(text, limit = 26) {
+  if (!text) {
+    return "";
+  }
+
+  return text.length <= limit ? text : `${text.slice(0, Math.max(0, limit - 1))}…`;
+}
+
+function redrawSceneConnections() {
+  clearConnections();
+
+  if (!state.executionSteps.length || state.currentStepIndex < 0 || !dom.sceneCodeLine) {
+    return;
+  }
+
+  const tokenAnchors = Array.from(dom.sceneCodeLine.querySelectorAll(".scene-var-ref"));
+
+  if (!tokenAnchors.length || !dom.workspace || !dom.connectionSvg) {
+    return;
+  }
+
+  const linkToneByName = new Map();
+  tokenAnchors.forEach((anchor) => {
+    const name = anchor.dataset.variableName;
+    const tone = anchor.dataset.tone || "read";
+    const previousTone = linkToneByName.get(name);
+    if (!previousTone || getConnectionTonePriority(tone) > getConnectionTonePriority(previousTone)) {
+      linkToneByName.set(name, tone);
+    }
+  });
+
+  linkToneByName.forEach((tone, name) => {
+    const card = getVariableCardByName(name);
+    if (!card) {
+      return;
+    }
+
+    card.classList.add("is-linked", `link-${tone}`);
+  });
+
+  tokenAnchors.forEach((anchor, index) => {
+    const name = anchor.dataset.variableName;
+    const tone = anchor.dataset.tone || "read";
+    const card = getVariableCardByName(name);
+    if (!card) {
+      return;
+    }
+
+    drawConnectionPath(anchor, card, tone, index, tokenAnchors.length);
+  });
+}
+
+function clearConnections() {
+  if (dom.connectionSvg) {
+    dom.connectionSvg.innerHTML = "";
+  }
+
+  if (!dom.visualizationGrid) {
+    return;
+  }
+
+  for (const card of dom.visualizationGrid.querySelectorAll(".var-card")) {
+    card.classList.remove("is-linked", "link-read", "link-create", "link-update");
+  }
+}
+
+function buildSceneConnectionTargets(snapshot, diff) {
+  return buildSceneLineParts(snapshot, diff)
+    .filter((part) => part.type === "ref")
+    .map((part) => ({
+      name: part.name,
+      tone: part.tone,
+      value: part.value,
+    }));
+}
+
+function getConnectionTonePriority(tone) {
+  if (tone === "create") {
+    return 3;
+  }
+
+  if (tone === "update") {
+    return 2;
+  }
+
+  return 1;
+}
+
+function getVariableCardByName(name) {
+  return Array.from(dom.visualizationGrid.querySelectorAll(".var-card")).find(
+    (card) => card.dataset.variableName === name
+  );
+}
+
+function drawConnectionPath(sourceAnchor, card, tone, index, total) {
+  const workspaceRect = dom.workspace.getBoundingClientRect();
+  const startRect = sourceAnchor.getBoundingClientRect();
+  const endRect = card.getBoundingClientRect();
+  const spread = total > 1 ? (index - (total - 1) / 2) * 18 : 0;
+  const x1 = startRect.left + startRect.width / 2 - workspaceRect.left;
+  const y1 = startRect.bottom - workspaceRect.top - 2;
+  const x2 = endRect.left + endRect.width / 2 - workspaceRect.left;
+  const y2 = endRect.top - workspaceRect.top + 6;
+  const curveWidth = x2 - x1;
+  const verticalGap = Math.max(26, (y2 - y1) * 0.44);
+  const cx1 = x1 + curveWidth * 0.14 + spread * 0.25;
+  const cy1 = y1 + verticalGap;
+  const cx2 = x2 - curveWidth * 0.12 - spread * 0.2;
+  const cy2 = y2 - Math.max(16, verticalGap * 0.55);
+
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", `M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`);
+  path.setAttribute("class", `variable-link tone-${tone}`);
+  path.style.opacity = "0";
+  dom.connectionSvg.appendChild(path);
+
+  const fallbackLength = Math.max(220, Math.abs(curveWidth) + Math.abs(y2 - y1));
+  const pathLength =
+    typeof path.getTotalLength === "function" ? Math.max(path.getTotalLength(), fallbackLength) : fallbackLength;
+  path.style.strokeDasharray = `${pathLength}`;
+  path.style.strokeDashoffset = `${pathLength}`;
+  path.style.transition = "stroke-dashoffset 420ms ease, opacity 220ms ease";
+
+  requestAnimationFrame(() => {
+    path.style.opacity = "0.84";
+    path.style.strokeDashoffset = "0";
+  });
+}
+
 function renderEmptyState(message) {
   dom.visualizationGrid.innerHTML = "";
+  clearConnections();
 
   const card = document.createElement("article");
   card.className = "empty-state";
@@ -717,8 +1381,8 @@ function renderEmptyState(message) {
       <circle cx="65" cy="77" r="5" fill="#ffcad4" opacity="0.8"></circle>
       <circle cx="103" cy="77" r="5" fill="#ffcad4" opacity="0.8"></circle>
     </svg>
-    <h3>코드를 실행하면 변수 카드가 나타나요</h3>
-    <p>${message || "오른쪽 패널에서 변수의 타입과 값을 한눈에 읽을 수 있게 정리해 드립니다."}</p>
+    <h3>코드를 실행하면 변수 노드가 장면에 배치돼요</h3>
+    <p>${message || "변수가 어디서 만들어지고 어떤 줄에서 사용되는지 선과 모션으로 보여드립니다."}</p>
   `;
   dom.visualizationGrid.appendChild(card);
 }
@@ -820,6 +1484,23 @@ async def __codex_maybe_await(value):
     return value
 
 class __CodexInputTransformer(ast.NodeTransformer):
+    def __init__(self):
+        super().__init__()
+        self._function_stack = []
+        self.unsupported_sync_input_lines = []
+
+    def visit_FunctionDef(self, node):
+        self._function_stack.append(False)
+        self.generic_visit(node)
+        self._function_stack.pop()
+        return node
+
+    def visit_AsyncFunctionDef(self, node):
+        self._function_stack.append(True)
+        self.generic_visit(node)
+        self._function_stack.pop()
+        return node
+
     def visit_Call(self, node):
         self.generic_visit(node)
         is_input_name = isinstance(node.func, ast.Name) and node.func.id == 'input'
@@ -830,6 +1511,9 @@ class __CodexInputTransformer(ast.NodeTransformer):
             and node.func.attr == 'input'
         )
         if is_input_name or is_builtins_input:
+            if self._function_stack and not self._function_stack[-1]:
+                self.unsupported_sync_input_lines.append(getattr(node, 'lineno', 0) or 0)
+                return node
             wrapped = ast.Call(
                 func=ast.Name(id='__codex_maybe_await', ctx=ast.Load()),
                 args=[node],
@@ -993,7 +1677,13 @@ builtins.input = __codex_input
 
 try:
     __tree = ast.parse(__source, filename='<student_code>', mode='exec')
-    __tree = __CodexInputTransformer().visit(__tree)
+    __transformer = __CodexInputTransformer()
+    __tree = __transformer.visit(__tree)
+    if __transformer.unsupported_sync_input_lines:
+        __line = __transformer.unsupported_sync_input_lines[0]
+        raise SyntaxError(
+            f"현재 학습 도구는 일반 함수 내부의 input()을 아직 지원하지 않습니다. input()을 함수 바깥 최상위 코드로 옮겨 주세요. (line {__line})"
+        )
     ast.fix_missing_locations(__tree)
     __code = compile(__tree, filename='<student_code>', mode='exec', flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT)
     sys.settrace(__tracer)

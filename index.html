@@ -82,7 +82,8 @@
         </div>
       </header>
 
-      <main class="workspace">
+      <main id="workspace" class="workspace">
+        <svg id="connectionSvg" class="connection-svg" aria-hidden="true"></svg>
         <section class="panel editor-panel">
           <div class="panel-heading">
             <div>
@@ -141,10 +142,22 @@
             </div>
 
             <div class="step-toolbar">
+              <button id="playPauseButton" class="step-button step-button-primary" type="button">
+                ▶ 재생
+              </button>
               <button id="firstStepButton" class="step-button" type="button">처음</button>
               <button id="prevStepButton" class="step-button" type="button">이전</button>
               <button id="nextStepButton" class="step-button" type="button">다음</button>
               <button id="lastStepButton" class="step-button" type="button">마지막</button>
+              <label class="speed-control" for="playbackSpeed">
+                <span>속도</span>
+                <select id="playbackSpeed" class="speed-select">
+                  <option value="1300">0.75x</option>
+                  <option value="900" selected>1.0x</option>
+                  <option value="600">1.5x</option>
+                  <option value="350">2.0x</option>
+                </select>
+              </label>
             </div>
 
             <input
@@ -176,30 +189,41 @@
             </div>
           </section>
 
-          <div id="visualizationGrid" class="visualization-grid">
-            <article class="empty-state">
-              <svg viewBox="0 0 180 140" aria-hidden="true">
-                <path
-                  d="M24 88c0-18 15-33 33-33 4 0 9 1 13 3 6-14 20-23 36-23 18 0 33 11 39 27 3-1 6-2 10-2 12 0 21 9 21 21s-9 21-21 21H47c-13 0-23-10-23-23z"
-                  fill="#fff7d6"
-                />
-                <circle cx="84" cy="70" r="18" fill="#ffffff" />
-                <circle cx="77" cy="67" r="3.8" fill="#213547" />
-                <circle cx="91" cy="67" r="3.8" fill="#213547" />
-                <path
-                  d="M77 79c3 4 12 4 15 0"
-                  fill="none"
-                  stroke="#213547"
-                  stroke-linecap="round"
-                  stroke-width="3"
-                />
-                <circle cx="65" cy="77" r="5" fill="#ffcad4" opacity="0.8" />
-                <circle cx="103" cy="77" r="5" fill="#ffcad4" opacity="0.8" />
-              </svg>
-              <h3>코드를 실행하면 변수 카드가 나타나요</h3>
-              <p>오른쪽 패널에서 변수의 타입과 값을 한눈에 읽을 수 있게 정리해 드립니다.</p>
-            </article>
-          </div>
+          <section id="visualizationStage" class="visualization-stage">
+            <div class="scene-label">
+              변수는 장면처럼 흩어져 있고, 지금 실행 중인 코드 줄과 선으로 연결됩니다.
+            </div>
+
+            <div id="sceneCodeLine" class="scene-code-line" aria-live="polite">
+              <span class="scene-code-badge">0행</span>
+              <div class="scene-code-text">실행 중인 코드 줄이 여기에 나타납니다.</div>
+            </div>
+
+            <div id="visualizationGrid" class="visualization-grid">
+              <article class="empty-state">
+                <svg viewBox="0 0 180 140" aria-hidden="true">
+                  <path
+                    d="M24 88c0-18 15-33 33-33 4 0 9 1 13 3 6-14 20-23 36-23 18 0 33 11 39 27 3-1 6-2 10-2 12 0 21 9 21 21s-9 21-21 21H47c-13 0-23-10-23-23z"
+                    fill="#fff7d6"
+                  />
+                  <circle cx="84" cy="70" r="18" fill="#ffffff" />
+                  <circle cx="77" cy="67" r="3.8" fill="#213547" />
+                  <circle cx="91" cy="67" r="3.8" fill="#213547" />
+                  <path
+                    d="M77 79c3 4 12 4 15 0"
+                    fill="none"
+                    stroke="#213547"
+                    stroke-linecap="round"
+                    stroke-width="3"
+                  />
+                  <circle cx="65" cy="77" r="5" fill="#ffcad4" opacity="0.8" />
+                  <circle cx="103" cy="77" r="5" fill="#ffcad4" opacity="0.8" />
+                </svg>
+                <h3>코드를 실행하면 변수 노드가 장면에 배치돼요</h3>
+                <p>변수가 어디서 만들어지고 어떤 줄에서 사용되는지 선과 모션으로 따라갈 수 있습니다.</p>
+              </article>
+            </div>
+          </section>
         </section>
       </main>
 
