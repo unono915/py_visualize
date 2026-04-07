@@ -245,6 +245,12 @@ const state = {
 - **결과**: ✅ 렌더 후 실제 노드 크기를 기준으로 충돌 해소 단계를 추가하여 겹침을 완화
 - **요청**: 코드 에디터에 `한 줄 실행` 버튼을 추가하고, 첫 줄부터 단계적으로 시작할 수 있게 변경
 - **결과**: ✅ `한 줄 실행` 버튼을 추가하고, 해당 버튼 실행 시 Step Explorer가 첫 스텝부터 열리도록 구현
+- **요청**: 생성된 변수 오브젝트를 마우스로 드래그해 직접 이동할 수 있게 변경
+- **결과**: ✅ 변수 노드 드래그 이동과 위치 override 상태를 추가하고, 드래그 중 연결선도 즉시 재계산되도록 구현
+- **요청**: `while True` 같은 무한 반복문 실행 시 페이지가 깨지기 전에 예방
+- **결과**: ✅ tracer 기반 실행 시간/이벤트 수 제한을 추가해 무한 반복을 친절한 에러 메시지로 중단하도록 구현
+- **요청**: 출력문 안에서 f-string을 사용할 때도 `{...}` 내부 변수를 인식해 연결선이 이어지게 개선
+- **결과**: ✅ scene code line 파서를 f-string-aware 하게 확장해 `{i}`, `{total}` 같은 내부 변수도 ref 토큰으로 추출되도록 구현
 
 ---
 
@@ -263,6 +269,9 @@ const state = {
 | 2026-04-06 | 장면형 변수 캔버스 및 연결선 기반 레이아웃 전환 | `index.html`, `style.css`, `visualizer.js`, `WORK_PROGRESS.md`, `PROJECT_CONTEXT.md` | ✅ 완료 |
 | 2026-04-07 | 우측 실행 줄 토큰 기준 연결선 및 노드 겹침 완화 | `index.html`, `style.css`, `visualizer.js`, `WORK_PROGRESS.md`, `PROJECT_CONTEXT.md` | ✅ 완료 |
 | 2026-04-07 | `한 줄 실행` 단계 진입 버튼 추가 | `index.html`, `visualizer.js`, `WORK_PROGRESS.md`, `PROJECT_CONTEXT.md` | ✅ 완료 |
+| 2026-04-07 | 변수 노드 드래그 이동 지원 | `style.css`, `visualizer.js`, `WORK_PROGRESS.md`, `PROJECT_CONTEXT.md` | ✅ 완료 |
+| 2026-04-07 | 무한 반복 실행 보호 장치 추가 | `visualizer.js`, `WORK_PROGRESS.md`, `PROJECT_CONTEXT.md` | ✅ 완료 |
+| 2026-04-07 | f-string 내부 변수 연결선 인식 지원 | `visualizer.js`, `WORK_PROGRESS.md`, `PROJECT_CONTEXT.md` | ✅ 완료 |
 
 ---
 

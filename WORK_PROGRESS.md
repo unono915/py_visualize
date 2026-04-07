@@ -170,3 +170,77 @@
   - 이후 진행은 오른쪽 Step Explorer의 `다음` 버튼으로 이어지는 흐름이 만들어졌다.
 - 다음 작업:
   - `input()` 값 토큰 이동과 `print()` 출력 흐름을 같은 단계 실행 흐름 위에 연결한다.
+
+### Task 007
+
+- 날짜: 2026-04-07
+- 목표: 변수 노드를 마우스로 드래그해 사용자가 직접 배치를 조정할 수 있게 만든다.
+- 변경 파일:
+  - `style.css`
+  - `visualizer.js`
+  - `PROJECT_CONTEXT.md`
+  - `WORK_PROGRESS.md`
+- 구현 내용:
+  - 변수 노드에 드래그 상태(`sceneNodeOverrides`)를 추가해 사용자가 옮긴 위치를 step 이동 중에도 유지하도록 했다.
+  - 노드 렌더 시 자동 배치 결과보다 사용자 override 위치를 우선 적용하도록 변경했다.
+  - 포인터 기반 드래그 시작 / 이동 / 종료 로직을 추가하고, 드래그 중에는 연결선이 즉시 다시 그려지도록 했다.
+  - 커서, 선택 방지, 드래그 중 강조 스타일을 추가해 조작감을 보완했다.
+- 테스트:
+  - `node --check visualizer.js`
+  - Node 기반 헬퍼 테스트
+  - override 위치 조회와 fallback 위치 조회 확인
+  - 포인터 좌표에서 scene 퍼센트 위치 계산 확인
+  - 드래그 이동 시 CSS 좌표와 override 상태가 함께 갱신되는지 확인
+  - 드래그 종료 시 active drag 상태가 해제되는지 확인
+- 결과:
+  - 생성된 변수 노드를 사용자가 직접 잡아서 원하는 위치로 재배치할 수 있는 기반이 생겼다.
+  - 연결선도 새 위치를 따라가므로, 수업 중 교사가 화면 구성을 직접 정리하는 방식이 가능해졌다.
+- 다음 작업:
+  - `input()` 값 토큰 이동과 `print()` 출력 흐름을 현재 드래그 가능한 장면 시스템 위에 연결한다.
+
+### Task 008
+
+- 날짜: 2026-04-07
+- 목표: `while True` 같은 무한 반복으로 페이지가 멈추기 전에 실행을 중단하는 보호 장치를 추가한다.
+- 변경 파일:
+  - `visualizer.js`
+  - `PROJECT_CONTEXT.md`
+  - `WORK_PROGRESS.md`
+- 구현 내용:
+  - Python 실행용 tracer에 실행 이벤트 수 제한과 경과 시간 제한을 추가했다.
+  - 제한을 넘기면 내부 traceback 대신 학습용 안내 메시지로 중단하도록 `__ExecutionLimitError` 분기를 넣었다.
+  - Pyodide 초기 preload import에도 `time`을 추가해 실행 시간 측정을 가능하게 했다.
+- 테스트:
+  - `node --check visualizer.js`
+  - Node 기반 검증으로 runner script에 guard 상수와 custom exception handler가 들어가는지 확인
+  - Python standalone tracer 시뮬레이션으로 `while True: pass`가 `ExecutionLimitError`로 중단되는지 확인
+- 결과:
+  - 무한 반복문으로 페이지 전체가 멈추는 상황을 현재 구조 안에서 상당 부분 예방할 수 있게 됐다.
+  - 사용자에게는 브라우저 오류보다 “반복 조건을 확인해 달라”는 친절한 메시지가 보이게 된다.
+- 다음 작업:
+  - `input()` 값 토큰 이동과 `print()` 출력 흐름을 현재 안전장치 위에서 장면 시스템에 연결한다.
+
+### Task 009
+
+- 날짜: 2026-04-07
+- 목표: 출력문이나 대입문 안의 f-string에서도 `{...}` 내부 변수를 인식해 연결선이 이어지도록 만든다.
+- 변경 파일:
+  - `visualizer.js`
+  - `PROJECT_CONTEXT.md`
+  - `WORK_PROGRESS.md`
+- 구현 내용:
+  - 우측 scene code line 토큰 파서를 일반 문자열과 f-string으로 구분하도록 확장했다.
+  - `f'...'`, `f"..."`, `rf'...'`, `fr"..."` 같은 formatted string prefix를 감지하고, 문자열 본문 안의 `{...}` 표현식을 별도로 다시 토큰화하도록 변경했다.
+  - f-string 내부 표현식에서는 기존 변수 참조 규칙과 tone 규칙을 그대로 재사용해 `read` / `update` / `create` 연결선이 이어지게 했다.
+  - 일반 문자열은 기존처럼 통째로 text로 유지해서 `'name'` 같은 리터럴이 변수로 오인되지 않도록 했다.
+- 테스트:
+  - `node --check visualizer.js`
+  - Node VM 기반 파서 검증
+  - `print(f'{i} 더하는 중... 합계: {total}')`에서 `i`, `total`이 ref 토큰으로 추출되는지 확인
+  - `print('name', name)`에서 따옴표 안 `name`은 무시되고 바깥 `name`만 ref로 잡히는지 확인
+  - `print(f'{{합계}} {total}')`에서 escaped brace는 text로 유지되고 `total`만 ref로 잡히는지 확인
+- 결과:
+  - 이제 `print(f'{i} 더하는 중... 합계: {total}')`처럼 수업에서 자주 나오는 f-string 출력문도 우측 실행 줄에서 변수 이름이 강조되고 연결선이 정상적으로 이어진다.
+  - 일반 문자열 처리 동작은 유지해서 기존 연결선 규칙이 깨지지 않도록 했다.
+- 다음 작업:
+  - `input()` 값 토큰 이동과 `print()` 출력 흐름을 장면 시스템에 연결한다.

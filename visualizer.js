@@ -93,6 +93,8 @@ const state = {
   stepsTruncated: false,
   lastResult: null,
   lastExecutedSource: "",
+  sceneNodeOverrides: {},
+  activeDrag: null,
 };
 
 const dom = {};
@@ -155,6 +157,9 @@ function bindEvents() {
   dom.codeInput.addEventListener("scroll", syncLineNumbers);
   dom.codeInput.addEventListener("keydown", handleEditorKeydown);
   window.addEventListener("resize", handleSceneResize);
+  window.addEventListener("pointermove", handleNodeDragMove);
+  window.addEventListener("pointerup", handleNodeDragEnd);
+  window.addEventListener("pointercancel", handleNodeDragEnd);
   dom.runButton.addEventListener("click", () => executeCode());
   dom.stepRunButton.addEventListener("click", () => executeCode({ initialStepIndex: 0 }));
   dom.resetButton.addEventListener("click", resetWorkspace);
@@ -320,6 +325,7 @@ import inspect
 import io
 import json
 import sys
+import time
 import traceback
 import types
 `);
@@ -415,6 +421,7 @@ function setupStepExplorer(result, source, options = {}) {
 
 function clearStepExplorer() {
   stopPlayback();
+  resetSceneNodeOverrides();
   state.executionSteps = [];
   state.stepDiffs = [];
   state.currentStepIndex = -1;
@@ -681,21 +688,26 @@ function buildSceneLineParts(snapshot, diff) {
     return [];
   }
 
-  const variableNames = new Set((snapshot?.globals || []).map((variable) => variable.name));
+  return buildSceneTokenParts(lineText, {
+    variableNames: new Set((snapshot?.globals || []).map((variable) => variable.name)),
+    diff,
+    seenCounts: new Map(),
+  });
+}
+
+function buildSceneTokenParts(lineText, parserState) {
   const parts = [];
-  const seenCounts = new Map();
   let cursor = 0;
 
   while (cursor < lineText.length) {
-    const char = lineText[cursor];
-
-    if (char === "'" || char === '"') {
-      const stringToken = consumeQuotedText(lineText, cursor);
-      parts.push({ type: "text", value: stringToken.value });
+    const stringToken = consumeSceneStringToken(lineText, cursor, parserState);
+    if (stringToken) {
+      parts.push(...stringToken.parts);
       cursor = stringToken.nextIndex;
       continue;
     }
 
+    const char = lineText[cursor];
     if (/[A-Za-z_]/.test(char)) {
       let end = cursor + 1;
       while (end < lineText.length && /[A-Za-z0-9_]/.test(lineText[end])) {
@@ -703,13 +715,13 @@ function buildSceneLineParts(snapshot, diff) {
       }
 
       const token = lineText.slice(cursor, end);
-      if (variableNames.has(token)) {
-        const occurrence = (seenCounts.get(token) || 0) + 1;
-        seenCounts.set(token, occurrence);
+      if (parserState.variableNames.has(token)) {
+        const occurrence = (parserState.seenCounts.get(token) || 0) + 1;
+        parserState.seenCounts.set(token, occurrence);
         parts.push({
           type: "ref",
           name: token,
-          tone: getSceneTokenTone(token, diff, occurrence),
+          tone: getSceneTokenTone(token, parserState.diff, occurrence),
           value: token,
         });
       } else {
@@ -730,8 +742,168 @@ function buildSceneLineParts(snapshot, diff) {
   return mergeAdjacentTextParts(parts);
 }
 
-function consumeQuotedText(lineText, startIndex) {
-  const quote = lineText[startIndex];
+function consumeSceneStringToken(lineText, startIndex, parserState) {
+  const stringStart = matchSceneStringStart(lineText, startIndex);
+  if (!stringStart) {
+    return null;
+  }
+
+  if (!stringStart.isFormatted) {
+    const stringToken = consumeQuotedText(lineText, stringStart.quoteIndex, stringStart.quote);
+    return {
+      parts: [{ type: "text", value: lineText.slice(startIndex, stringToken.nextIndex) }],
+      nextIndex: stringToken.nextIndex,
+    };
+  }
+
+  return consumeFormattedString(lineText, startIndex, stringStart, parserState);
+}
+
+function matchSceneStringStart(lineText, startIndex) {
+  const directQuote = lineText[startIndex];
+  if (directQuote === "'" || directQuote === '"') {
+    return {
+      prefix: "",
+      quote: directQuote,
+      quoteIndex: startIndex,
+      isFormatted: false,
+    };
+  }
+
+  if (!/[A-Za-z]/.test(lineText[startIndex])) {
+    return null;
+  }
+
+  let cursor = startIndex;
+  while (cursor < lineText.length && /[A-Za-z]/.test(lineText[cursor])) {
+    cursor += 1;
+  }
+
+  const prefix = lineText.slice(startIndex, cursor);
+  const quote = lineText[cursor];
+  if ((quote !== "'" && quote !== '"') || !isSupportedSceneStringPrefix(prefix)) {
+    return null;
+  }
+
+  return {
+    prefix,
+    quote,
+    quoteIndex: cursor,
+    isFormatted: /f/i.test(prefix),
+  };
+}
+
+function isSupportedSceneStringPrefix(prefix) {
+  const normalized = prefix.toLowerCase();
+  return ["r", "u", "b", "f", "br", "rb", "fr", "rf"].includes(normalized);
+}
+
+function consumeFormattedString(lineText, startIndex, stringStart, parserState) {
+  const parts = [];
+  const quote = stringStart.quote;
+  let cursor = stringStart.quoteIndex + 1;
+  let chunkStart = startIndex;
+
+  while (cursor < lineText.length) {
+    if (lineText[cursor] === "\\" && cursor + 1 < lineText.length) {
+      cursor += 2;
+      continue;
+    }
+
+    if (lineText[cursor] === "{") {
+      if (lineText[cursor + 1] === "{") {
+        cursor += 2;
+        continue;
+      }
+
+      if (chunkStart < cursor) {
+        parts.push({ type: "text", value: lineText.slice(chunkStart, cursor) });
+      }
+
+      parts.push({ type: "text", value: "{" });
+
+      const expression = consumeFormattedExpression(lineText, cursor + 1);
+      parts.push(...buildSceneTokenParts(expression.value, parserState));
+      if (expression.closed) {
+        parts.push({ type: "text", value: "}" });
+      }
+
+      cursor = expression.nextIndex;
+      chunkStart = cursor;
+      continue;
+    }
+
+    if (lineText[cursor] === "}" && lineText[cursor + 1] === "}") {
+      cursor += 2;
+      continue;
+    }
+
+    if (lineText[cursor] === quote) {
+      cursor += 1;
+      break;
+    }
+
+    cursor += 1;
+  }
+
+  if (chunkStart < cursor) {
+    parts.push({ type: "text", value: lineText.slice(chunkStart, cursor) });
+  }
+
+  return {
+    parts: mergeAdjacentTextParts(parts),
+    nextIndex: cursor,
+  };
+}
+
+function consumeFormattedExpression(lineText, startIndex) {
+  let cursor = startIndex;
+  let depth = 1;
+
+  while (cursor < lineText.length) {
+    const stringStart = matchSceneStringStart(lineText, cursor);
+    if (stringStart) {
+      const stringToken = consumeQuotedText(lineText, stringStart.quoteIndex, stringStart.quote);
+      cursor = stringToken.nextIndex;
+      continue;
+    }
+
+    if (lineText[cursor] === "{") {
+      depth += 1;
+      cursor += 1;
+      continue;
+    }
+
+    if (lineText[cursor] === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return {
+          value: lineText.slice(startIndex, cursor),
+          nextIndex: cursor + 1,
+          closed: true,
+        };
+      }
+
+      cursor += 1;
+      continue;
+    }
+
+    if (lineText[cursor] === "\\" && cursor + 1 < lineText.length) {
+      cursor += 2;
+      continue;
+    }
+
+    cursor += 1;
+  }
+
+  return {
+    value: lineText.slice(startIndex),
+    nextIndex: lineText.length,
+    closed: false,
+  };
+}
+
+function consumeQuotedText(lineText, startIndex, quote = lineText[startIndex]) {
   let cursor = startIndex + 1;
 
   while (cursor < lineText.length) {
@@ -906,7 +1078,7 @@ function renderVariables(variables, diff = null) {
     const card = document.createElement("article");
     const normalizedType = normalizeType(variable.type);
     const changeTone = getVariableChangeTone(variable.name, diff);
-    const position = layout.get(variable.name) || { x: 50, y: 50 };
+    const position = getSceneNodePosition(variable.name, layout.get(variable.name) || { x: 50, y: 50 });
     card.id = `var-node-${variable.name}`;
     card.className = "var-card";
     card.dataset.type = normalizedType;
@@ -925,6 +1097,7 @@ function renderVariables(variables, diff = null) {
 
     card.appendChild(createCardHeader(variable, normalizedType));
     card.appendChild(createCardBody(variable, normalizedType));
+    attachSceneNodeDrag(card);
     dom.visualizationGrid.appendChild(card);
     renderedCards.push(card);
     requestAnimationFrame(() => card.classList.add("visible"));
@@ -962,6 +1135,26 @@ function buildSceneLayout(variables) {
   layoutSceneGroup(groups.get("other"), { xMin: 16, xMax: 40, yMin: 16, yMax: 30, columns: 1 }, layout);
 
   return layout;
+}
+
+function getSceneNodePosition(variableName, fallbackPosition) {
+  return state.sceneNodeOverrides[variableName] || fallbackPosition;
+}
+
+function saveSceneNodeOverride(variableName, x, y) {
+  state.sceneNodeOverrides[variableName] = {
+    x: clamp(x, 8, 92),
+    y: clamp(y, 10, 90),
+  };
+}
+
+function resetSceneNodeOverrides() {
+  if (state.activeDrag?.card) {
+    state.activeDrag.card.classList.remove("is-dragging");
+  }
+
+  state.activeDrag = null;
+  state.sceneNodeOverrides = {};
 }
 
 function getSceneGroupKey(normalizedType) {
@@ -1093,9 +1286,90 @@ function resolveSceneNodeCollisions(cards) {
   }
 
   nodes.forEach((node) => {
-    node.card.style.setProperty("--node-x", `${(node.x / stageWidth) * 100}%`);
-    node.card.style.setProperty("--node-y", `${(node.y / stageHeight) * 100}%`);
+    const xPercent = (node.x / stageWidth) * 100;
+    const yPercent = (node.y / stageHeight) * 100;
+    node.card.style.setProperty("--node-x", `${xPercent}%`);
+    node.card.style.setProperty("--node-y", `${yPercent}%`);
+    saveSceneNodeOverride(node.card.dataset.variableName, xPercent, yPercent);
   });
+}
+
+function attachSceneNodeDrag(card) {
+  card.addEventListener("pointerdown", (event) => startNodeDrag(event, card));
+}
+
+function startNodeDrag(event, card) {
+  if (event.button !== 0 || !dom.visualizationGrid) {
+    return;
+  }
+
+  event.preventDefault();
+  const cardRect = card.getBoundingClientRect();
+  state.activeDrag = {
+    pointerId: event.pointerId,
+    card,
+    variableName: card.dataset.variableName,
+    offsetX: event.clientX - cardRect.left,
+    offsetY: event.clientY - cardRect.top,
+  };
+  card.classList.add("is-dragging");
+}
+
+function handleNodeDragMove(event) {
+  const drag = state.activeDrag;
+  if (!drag || drag.pointerId !== event.pointerId || !dom.visualizationGrid) {
+    return;
+  }
+
+  event.preventDefault();
+  const gridRect = dom.visualizationGrid.getBoundingClientRect();
+  const width = Math.max(drag.card.offsetWidth, 120);
+  const height = Math.max(drag.card.offsetHeight, 56);
+  const position = getScenePercentFromPointer(
+    event.clientX,
+    event.clientY,
+    gridRect,
+    width,
+    height,
+    drag.offsetX,
+    drag.offsetY
+  );
+
+  drag.card.style.setProperty("--node-x", `${position.x}%`);
+  drag.card.style.setProperty("--node-y", `${position.y}%`);
+  saveSceneNodeOverride(drag.variableName, position.x, position.y);
+  redrawSceneConnections();
+}
+
+function handleNodeDragEnd(event) {
+  const drag = state.activeDrag;
+  if (!drag || (event.pointerId !== undefined && drag.pointerId !== event.pointerId)) {
+    return;
+  }
+
+  drag.card.classList.remove("is-dragging");
+  state.activeDrag = null;
+  redrawSceneConnections();
+}
+
+function getScenePercentFromPointer(
+  clientX,
+  clientY,
+  gridRect,
+  cardWidth,
+  cardHeight,
+  offsetX,
+  offsetY
+) {
+  const centerX = clientX - gridRect.left - offsetX + cardWidth / 2;
+  const centerY = clientY - gridRect.top - offsetY + cardHeight / 2;
+  const clampedX = clamp(centerX, cardWidth / 2 + 10, gridRect.width - cardWidth / 2 - 10);
+  const clampedY = clamp(centerY, cardHeight / 2 + 10, gridRect.height - cardHeight / 2 - 10);
+
+  return {
+    x: (clampedX / gridRect.width) * 100,
+    y: (clampedY / gridRect.height) * 100,
+  };
 }
 
 function getNameSeed(name) {
@@ -1469,6 +1743,7 @@ import inspect
 import io
 import json
 import sys
+import time
 import traceback
 import types
 
@@ -1476,9 +1751,16 @@ import js
 
 __source = ${JSON.stringify(source)}
 __STEP_LIMIT = 400
+__TRACE_EVENT_LIMIT = 12000
+__EXECUTION_TIME_LIMIT = 2.5
 __steps = []
 __steps_truncated = False
 __trace_state = {}
+__trace_event_count = 0
+__trace_started_at = time.perf_counter()
+
+class __ExecutionLimitError(Exception):
+    pass
 
 async def __codex_input(prompt=''):
     sys.stdout.write(str(prompt))
@@ -1597,7 +1879,7 @@ def __serialize_scope(scope):
     for name, value in scope.items():
         if name.startswith('_'):
             continue
-        if name in {'ast', 'builtins', 'contextlib', 'inspect', 'io', 'json', 'sys', 'traceback', 'types', 'js'}:
+        if name in {'ast', 'builtins', 'contextlib', 'inspect', 'io', 'json', 'sys', 'time', 'traceback', 'types', 'js'}:
             continue
         if isinstance(value, types.ModuleType):
             continue
@@ -1652,9 +1934,26 @@ def __append_step(executed_line, frame):
         'frame_label': active_label,
     })
 
+def __guard_execution_limit():
+    global __trace_event_count
+    __trace_event_count += 1
+
+    if __trace_event_count > __TRACE_EVENT_LIMIT:
+        raise __ExecutionLimitError(
+            '실행이 너무 오래 계속되고 있어 중단했습니다. 무한 반복문일 수 있으니 조건이나 반복 횟수를 확인해 주세요.'
+        )
+
+    if time.perf_counter() - __trace_started_at > __EXECUTION_TIME_LIMIT:
+        raise __ExecutionLimitError(
+            '실행 시간이 너무 길어 중단했습니다. while 문이나 반복 조건을 다시 확인해 주세요.'
+        )
+
 def __tracer(frame, event, arg):
     if frame.f_code.co_filename != '<student_code>':
         return __tracer
+
+    if event in ('line', 'return'):
+        __guard_execution_limit()
 
     frame_id = id(frame)
 
@@ -1699,6 +1998,8 @@ try:
         __result = eval(__code, __scope, __scope)
         if inspect.isawaitable(__result):
             await __result
+except __ExecutionLimitError as __limit_error:
+    __error = str(__limit_error)
 except Exception:
     __tb = traceback.format_exc().strip().splitlines()
     __error = '\\n'.join(__tb[-4:])
