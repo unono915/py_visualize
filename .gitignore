@@ -6,3 +6,12 @@ chrome_step_*.txt
 Thumbs.db
 node_modules/
 .env
+
+# Local-only planning and working documents
+PROJECT_CONTEXT.md
+WORK_PROGRESS.md
+VIBE_CODING_PLAN.md
+DEPLOY.md
+Python_Visualizer_README.md
+chrome_dom.txt
+demo_animation.html

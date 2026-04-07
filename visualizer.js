@@ -76,6 +76,13 @@ const TYPE_LABELS = {
 const STORAGE_KEY = "py-visualize-draft";
 const DEFAULT_EXAMPLE_ID = "variables";
 const PYODIDE_INDEX = "https://cdn.jsdelivr.net/pyodide/v0.26.2/full/";
+const COLLECTION_PREVIEW_LIMIT = 8;
+const DICT_PREVIEW_LIMIT = 6;
+const DETAIL_PREVIEW_GAP = 10;
+const DETAIL_PREVIEW_MARGIN = 14;
+const DETAIL_PREVIEW_HIDE_DELAY = 140;
+const DETAIL_PREVIEW_MIN_BODY_HEIGHT = 120;
+const DETAIL_PREVIEW_MAX_BODY_HEIGHT = 260;
 
 const state = {
   pyodide: null,
@@ -93,6 +100,9 @@ const state = {
   stepsTruncated: false,
   lastResult: null,
   lastExecutedSource: "",
+  consolePlaybackEnabled: false,
+  activeDetailPreview: null,
+  detailPreviewHideTimer: null,
   sceneNodeOverrides: {},
   activeDrag: null,
 };
@@ -112,6 +122,7 @@ document.addEventListener("DOMContentLoaded", () => {
 function cacheDom() {
   dom.workspace = document.getElementById("workspace");
   dom.connectionSvg = document.getElementById("connectionSvg");
+  dom.detailPreviewLayer = document.getElementById("detailPreviewLayer");
   dom.codeInput = document.getElementById("codeInput");
   dom.lineNumbers = document.getElementById("lineNumbers");
   dom.consoleOutput = document.getElementById("consoleOutput");
@@ -157,11 +168,15 @@ function bindEvents() {
   dom.codeInput.addEventListener("scroll", syncLineNumbers);
   dom.codeInput.addEventListener("keydown", handleEditorKeydown);
   window.addEventListener("resize", handleSceneResize);
+  document.addEventListener("pointerdown", handleDocumentPointerDown);
+  window.addEventListener("keydown", handleGlobalKeydown);
   window.addEventListener("pointermove", handleNodeDragMove);
   window.addEventListener("pointerup", handleNodeDragEnd);
   window.addEventListener("pointercancel", handleNodeDragEnd);
   dom.runButton.addEventListener("click", () => executeCode());
-  dom.stepRunButton.addEventListener("click", () => executeCode({ initialStepIndex: 0 }));
+  dom.stepRunButton.addEventListener("click", () =>
+    executeCode({ initialStepIndex: 0, consolePlayback: true })
+  );
   dom.resetButton.addEventListener("click", resetWorkspace);
   dom.retryLoadButton.addEventListener("click", startLoad);
   dom.submitInputButton.addEventListener("click", submitInput);
@@ -378,10 +393,18 @@ async function executeCode(options = {}) {
     const rawResult = await state.pyodide.runPythonAsync(buildRunnerScript(source));
     const result = JSON.parse(rawResult);
     state.lastResult = result;
-    renderConsole(result.stdout, result.error || result.stderr);
+    const hasSteps = Array.isArray(result.steps) && result.steps.length;
+    const shouldReplayConsole = Boolean(options.consolePlayback && hasSteps);
 
-    if (Array.isArray(result.steps) && result.steps.length) {
-      setupStepExplorer(result, source, options);
+    if (!shouldReplayConsole) {
+      renderConsole(result.stdout, result.error || result.stderr);
+    }
+
+    if (hasSteps) {
+      setupStepExplorer(result, source, {
+        ...options,
+        consolePlayback: shouldReplayConsole,
+      });
     } else {
       renderVariables(result.variables);
     }
@@ -406,6 +429,7 @@ function setupStepExplorer(result, source, options = {}) {
   state.stepDiffs = buildStepDiffs(result.steps);
   state.stepsTruncated = Boolean(result.steps_truncated);
   state.currentSourceLines = source.split("\n");
+  state.consolePlaybackEnabled = Boolean(options.consolePlayback);
 
   dom.stepExplorer.hidden = false;
   dom.stepRange.min = "0";
@@ -421,11 +445,13 @@ function setupStepExplorer(result, source, options = {}) {
 
 function clearStepExplorer() {
   stopPlayback();
+  closeDetailPreview({ immediate: true });
   resetSceneNodeOverrides();
   state.executionSteps = [];
   state.stepDiffs = [];
   state.currentStepIndex = -1;
   state.stepsTruncated = false;
+  state.consolePlaybackEnabled = false;
 
   dom.stepExplorer.hidden = true;
   dom.stepCounter.textContent = "0 / 0";
@@ -453,6 +479,7 @@ function selectStep(index) {
     return;
   }
 
+  closeDetailPreview({ immediate: true });
   const safeIndex = Math.min(Math.max(index, 0), state.executionSteps.length - 1);
   const snapshot = state.executionSteps[safeIndex];
 
@@ -467,6 +494,7 @@ function selectStep(index) {
   renderFrameStack(snapshot.frames || []);
   renderActiveLocals(snapshot.active_locals || [], snapshot.frame_label);
   renderVariables(snapshot.globals || [], state.stepDiffs[safeIndex] || null);
+  renderStepConsole(safeIndex);
   updateStepControls();
   redrawSceneConnections();
 }
@@ -960,6 +988,7 @@ function handleSceneResize() {
   if (cards.length) {
     resolveSceneNodeCollisions(cards);
   }
+  updateActiveDetailPreviewPosition();
   redrawSceneConnections();
 }
 
@@ -989,6 +1018,27 @@ function renderConsole(stdout, errorText) {
   }
 
   dom.consoleOutput.scrollTop = dom.consoleOutput.scrollHeight;
+}
+
+function renderStepConsole(stepIndex) {
+  if (!state.consolePlaybackEnabled) {
+    return;
+  }
+
+  const payload = getStepConsolePayload(stepIndex);
+  renderConsole(payload.stdout, payload.errorText);
+}
+
+function getStepConsolePayload(stepIndex) {
+  const safeIndex = Math.min(Math.max(stepIndex, 0), state.executionSteps.length - 1);
+  const step = state.executionSteps[safeIndex] || null;
+  const finalError = safeIndex >= state.executionSteps.length - 1 ? state.lastResult?.error || "" : "";
+  const errorText = [step?.stderr || "", finalError].filter(Boolean).join("\n").trim();
+
+  return {
+    stdout: step?.stdout || "",
+    errorText,
+  };
 }
 
 function buildStepDiffs(steps) {
@@ -1062,6 +1112,7 @@ function getVariableChangeTone(variableName, diff) {
 }
 
 function renderVariables(variables, diff = null) {
+  closeDetailPreview({ immediate: true });
   dom.variableCount.textContent = `${variables.length}개 변수`;
   dom.visualizationGrid.innerHTML = "";
   clearConnections();
@@ -1303,6 +1354,7 @@ function startNodeDrag(event, card) {
     return;
   }
 
+  closeDetailPreview({ immediate: true });
   event.preventDefault();
   const cardRect = card.getBoundingClientRect();
   state.activeDrag = {
@@ -1446,10 +1498,12 @@ function createUnknownValue(text) {
 
 function createCollectionView(variable) {
   const wrapper = document.createElement("div");
+  wrapper.className = "detail-hover-host";
   const strip = document.createElement("div");
   strip.className = "cell-strip";
+  const preview = getCollectionPreview(variable);
 
-  (variable.items || []).slice(0, 4).forEach((item, index) => {
+  preview.items.forEach((item, index) => {
     const cell = document.createElement("div");
     cell.className = "value-cell";
 
@@ -1467,11 +1521,16 @@ function createCollectionView(variable) {
 
   wrapper.appendChild(strip);
 
-  if (variable.truncated) {
+  if (preview.isTruncated) {
     const note = document.createElement("p");
     note.className = "truncate-note";
-    note.textContent = "일부 항목만 보여주고 있습니다.";
+    note.textContent = "일부 항목만 보여주고 있습니다. 마우스를 올려 전체 보기";
     wrapper.appendChild(note);
+    appendDetailPreview(wrapper, {
+      title: `${getDetailPreviewTitle(variable)} 전체 보기`,
+      content: buildCollectionDetailText(variable),
+      footer: variable.truncated ? "실제 값이 더 많아 앞부분만 가져와 보여주고 있습니다." : "",
+    });
   }
 
   return wrapper;
@@ -1479,10 +1538,12 @@ function createCollectionView(variable) {
 
 function createDictView(variable) {
   const wrapper = document.createElement("div");
+  wrapper.className = "detail-hover-host";
   const entries = document.createElement("div");
   entries.className = "dict-entries";
+  const preview = getDictPreview(variable);
 
-  (variable.entries || []).slice(0, 3).forEach((entry) => {
+  preview.entries.forEach((entry) => {
     const chip = document.createElement("div");
     chip.className = "dict-entry";
 
@@ -1499,14 +1560,308 @@ function createDictView(variable) {
 
   wrapper.appendChild(entries);
 
-  if (variable.truncated) {
+  if (preview.isTruncated) {
     const note = document.createElement("p");
     note.className = "truncate-note";
-    note.textContent = "일부 키만 보여주고 있습니다.";
+    note.textContent = "일부 키만 보여주고 있습니다. 마우스를 올려 전체 보기";
     wrapper.appendChild(note);
+    appendDetailPreview(wrapper, {
+      title: `${getDetailPreviewTitle(variable)} 전체 보기`,
+      content: buildDictDetailText(variable),
+      footer: variable.truncated ? "실제 값이 더 많아 앞부분만 가져와 보여주고 있습니다." : "",
+    });
   }
 
   return wrapper;
+}
+
+function getCollectionPreview(variable) {
+  const items = variable.items || [];
+  const previewItems = items.slice(0, COLLECTION_PREVIEW_LIMIT);
+
+  return {
+    items: previewItems,
+    isTruncated: Boolean(variable.truncated) || items.length > previewItems.length,
+  };
+}
+
+function getDictPreview(variable) {
+  const entries = variable.entries || [];
+  const previewEntries = entries.slice(0, DICT_PREVIEW_LIMIT);
+
+  return {
+    entries: previewEntries,
+    isTruncated: Boolean(variable.truncated) || entries.length > previewEntries.length,
+  };
+}
+
+function getDetailPreviewTitle(variable) {
+  if (variable.type === "dict") {
+    return "딕셔너리";
+  }
+
+  if (variable.type === "tuple") {
+    return "튜플";
+  }
+
+  if (variable.type === "set") {
+    return "집합";
+  }
+
+  return "리스트";
+}
+
+function buildCollectionDetailText(variable) {
+  return (variable.items || [])
+    .map((item, index) => `${variable.type === "set" ? `item ${index + 1}` : index}: ${item}`)
+    .join("\n");
+}
+
+function buildDictDetailText(variable) {
+  return (variable.entries || [])
+    .map((entry) => `${entry.key}: ${entry.value}`)
+    .join("\n");
+}
+
+function appendDetailPreview(wrapper, preview) {
+  if (!preview?.content) {
+    return;
+  }
+
+  wrapper.title = preview.content;
+  wrapper.tabIndex = 0;
+  wrapper.dataset.detailPreview = "true";
+  wrapper.__detailPreview = preview;
+  attachDetailPreviewTrigger(wrapper);
+}
+
+function attachDetailPreviewTrigger(wrapper) {
+  wrapper.addEventListener("pointerenter", handleDetailPreviewPointerEnter);
+  wrapper.addEventListener("pointerleave", handleDetailPreviewPointerLeave);
+  wrapper.addEventListener("focusin", handleDetailPreviewFocusIn);
+  wrapper.addEventListener("focusout", handleDetailPreviewFocusOut);
+  wrapper.addEventListener("click", handleDetailPreviewClick);
+}
+
+function handleDetailPreviewPointerEnter(event) {
+  openDetailPreview(event.currentTarget);
+}
+
+function handleDetailPreviewPointerLeave() {
+  scheduleDetailPreviewHide();
+}
+
+function handleDetailPreviewFocusIn(event) {
+  openDetailPreview(event.currentTarget, { pinned: true });
+}
+
+function handleDetailPreviewFocusOut(event) {
+  const nextTarget = event.relatedTarget;
+  if (nextTarget && state.activeDetailPreview?.panelEl?.contains(nextTarget)) {
+    return;
+  }
+
+  scheduleDetailPreviewHide();
+}
+
+function handleDetailPreviewClick(event) {
+  event.stopPropagation();
+  openDetailPreview(event.currentTarget, { pinned: true });
+}
+
+function openDetailPreview(anchorEl, options = {}) {
+  const preview = anchorEl?.__detailPreview;
+  if (!preview || !dom.detailPreviewLayer) {
+    return;
+  }
+
+  cancelDetailPreviewHide();
+
+  if (state.activeDetailPreview?.anchorEl === anchorEl) {
+    state.activeDetailPreview.pinned = state.activeDetailPreview.pinned || Boolean(options.pinned);
+    updateActiveDetailPreviewPosition();
+    return;
+  }
+
+  closeDetailPreview({ immediate: true });
+
+  const panel = createDetailPreviewPanel(preview);
+  dom.detailPreviewLayer.innerHTML = "";
+  dom.detailPreviewLayer.appendChild(panel);
+  dom.detailPreviewLayer.setAttribute("aria-hidden", "false");
+
+  state.activeDetailPreview = {
+    anchorEl,
+    panelEl: panel,
+    pinned: Boolean(options.pinned),
+  };
+
+  requestAnimationFrame(() => {
+    updateActiveDetailPreviewPosition();
+    panel.classList.add("is-open");
+  });
+}
+
+function createDetailPreviewPanel(preview) {
+  const panel = document.createElement("section");
+  panel.className = "detail-preview";
+  panel.tabIndex = 0;
+
+  const heading = document.createElement("div");
+  heading.className = "detail-preview-title";
+  heading.textContent = preview.title;
+
+  const body = document.createElement("pre");
+  body.className = "detail-preview-body";
+  body.textContent = preview.content;
+
+  panel.append(heading, body);
+
+  if (preview.footer) {
+    const note = document.createElement("p");
+    note.className = "detail-preview-note";
+    note.textContent = preview.footer;
+    panel.appendChild(note);
+  }
+
+  panel.addEventListener("pointerenter", cancelDetailPreviewHide);
+  panel.addEventListener("pointerleave", scheduleDetailPreviewHide);
+  panel.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (state.activeDetailPreview) {
+      state.activeDetailPreview.pinned = true;
+    }
+  });
+
+  return panel;
+}
+
+function scheduleDetailPreviewHide() {
+  cancelDetailPreviewHide();
+
+  state.detailPreviewHideTimer = window.setTimeout(() => {
+    if (!state.activeDetailPreview || state.activeDetailPreview.pinned) {
+      return;
+    }
+
+    closeDetailPreview({ immediate: true });
+  }, DETAIL_PREVIEW_HIDE_DELAY);
+}
+
+function cancelDetailPreviewHide() {
+  if (state.detailPreviewHideTimer !== null) {
+    window.clearTimeout(state.detailPreviewHideTimer);
+    state.detailPreviewHideTimer = null;
+  }
+}
+
+function closeDetailPreview(options = {}) {
+  cancelDetailPreviewHide();
+
+  if (!state.activeDetailPreview) {
+    dom.detailPreviewLayer?.replaceChildren();
+    dom.detailPreviewLayer?.setAttribute("aria-hidden", "true");
+    return;
+  }
+
+  const panel = state.activeDetailPreview.panelEl;
+  state.activeDetailPreview = null;
+
+  if (!panel || options.immediate) {
+    dom.detailPreviewLayer?.replaceChildren();
+    dom.detailPreviewLayer?.setAttribute("aria-hidden", "true");
+    return;
+  }
+
+  panel.classList.remove("is-open");
+  window.setTimeout(() => {
+    if (state.activeDetailPreview) {
+      return;
+    }
+
+    dom.detailPreviewLayer?.replaceChildren();
+    dom.detailPreviewLayer?.setAttribute("aria-hidden", "true");
+  }, 180);
+}
+
+function updateActiveDetailPreviewPosition() {
+  const activePreview = state.activeDetailPreview;
+  if (!activePreview?.anchorEl || !activePreview.panelEl || !dom.workspace) {
+    return;
+  }
+
+  if (!activePreview.anchorEl.isConnected) {
+    closeDetailPreview({ immediate: true });
+    return;
+  }
+
+  let position = getDetailPreviewPosition(activePreview.anchorEl, activePreview.panelEl);
+  activePreview.panelEl.style.setProperty("--detail-preview-body-max-height", `${position.bodyMaxHeight}px`);
+  position = getDetailPreviewPosition(activePreview.anchorEl, activePreview.panelEl);
+  activePreview.panelEl.classList.toggle("position-top", position.placement === "top");
+  activePreview.panelEl.classList.toggle("position-bottom", position.placement === "bottom");
+  activePreview.panelEl.style.left = `${position.left}px`;
+  activePreview.panelEl.style.top = `${position.top}px`;
+  activePreview.panelEl.style.setProperty("--detail-preview-body-max-height", `${position.bodyMaxHeight}px`);
+}
+
+function getDetailPreviewPosition(anchorEl, panelEl) {
+  const workspaceRect = dom.workspace.getBoundingClientRect();
+  const anchorRect = anchorEl.getBoundingClientRect();
+  const panelRect = panelEl.getBoundingClientRect();
+  const anchorCenterX = anchorRect.left - workspaceRect.left + anchorRect.width / 2;
+  const anchorTop = anchorRect.top - workspaceRect.top;
+  const anchorBottom = anchorRect.bottom - workspaceRect.top;
+  const roomAbove = anchorTop - DETAIL_PREVIEW_GAP - DETAIL_PREVIEW_MARGIN;
+  const roomBelow = workspaceRect.height - anchorBottom - DETAIL_PREVIEW_GAP - DETAIL_PREVIEW_MARGIN;
+  const placement =
+    roomBelow >= Math.min(panelRect.height, 220) || roomBelow >= roomAbove ? "bottom" : "top";
+  const bodyMaxHeight = getDetailPreviewBodyMaxHeight(placement === "bottom" ? roomBelow : roomAbove);
+  const left = clamp(
+    anchorCenterX - panelRect.width / 2,
+    DETAIL_PREVIEW_MARGIN,
+    workspaceRect.width - panelRect.width - DETAIL_PREVIEW_MARGIN
+  );
+  const unclampedTop =
+    placement === "bottom"
+      ? anchorBottom + DETAIL_PREVIEW_GAP
+      : anchorTop - panelRect.height - DETAIL_PREVIEW_GAP;
+  const top = clamp(
+    unclampedTop,
+    DETAIL_PREVIEW_MARGIN,
+    workspaceRect.height - panelRect.height - DETAIL_PREVIEW_MARGIN
+  );
+
+  return {
+    left,
+    top,
+    placement,
+    bodyMaxHeight,
+  };
+}
+
+function getDetailPreviewBodyMaxHeight(availableHeight) {
+  const safeHeight = Math.max(DETAIL_PREVIEW_MIN_BODY_HEIGHT, availableHeight - 64);
+  return Math.min(DETAIL_PREVIEW_MAX_BODY_HEIGHT, safeHeight);
+}
+
+function handleDocumentPointerDown(event) {
+  if (!state.activeDetailPreview) {
+    return;
+  }
+
+  const { anchorEl, panelEl } = state.activeDetailPreview;
+  if (anchorEl?.contains(event.target) || panelEl?.contains(event.target)) {
+    return;
+  }
+
+  closeDetailPreview({ immediate: true });
+}
+
+function handleGlobalKeydown(event) {
+  if (event.key === "Escape") {
+    closeDetailPreview({ immediate: true });
+  }
 }
 
 function truncatePreview(text, limit = 26) {
@@ -1932,6 +2287,8 @@ def __append_step(executed_line, frame):
         'frames': frames,
         'active_locals': active_locals,
         'frame_label': active_label,
+        'stdout': __stdout.getvalue(),
+        'stderr': __stderr.getvalue(),
     })
 
 def __guard_execution_limit():
