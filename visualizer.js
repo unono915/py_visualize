@@ -156,6 +156,7 @@ function cacheDom() {
   dom.stepLineBadge = document.getElementById("stepLineBadge");
   dom.stepPhaseText = document.getElementById("stepPhaseText");
   dom.stepLineText = document.getElementById("stepLineText");
+  dom.stepInputNote = document.getElementById("stepInputNote");
   dom.sceneCodeLine = document.getElementById("sceneCodeLine");
   dom.frameStack = document.getElementById("frameStack");
   dom.activeLocals = document.getElementById("activeLocals");
@@ -461,6 +462,8 @@ function clearStepExplorer() {
   dom.stepLineBadge.textContent = "0행";
   dom.stepPhaseText.textContent = "실행 기록 없음";
   dom.stepLineText.textContent = "코드를 실행하면 각 줄이 끝날 때마다 변수 변화가 기록됩니다.";
+  dom.stepInputNote.innerHTML = "";
+  dom.stepInputNote.hidden = true;
   resetSceneCodeLine();
   dom.frameStack.innerHTML = "";
   dom.activeLocals.innerHTML = "";
@@ -489,6 +492,7 @@ function selectStep(index) {
   dom.stepLineBadge.textContent = `${snapshot.line}행`;
   dom.stepPhaseText.textContent = `${snapshot.frame_label} 실행 후`;
   dom.stepLineText.textContent = getSourceLine(snapshot.line);
+  renderStepInputNote(snapshot.input_events || []);
   updateLineNumbers();
   renderSceneCodeLine(snapshot, state.stepDiffs[safeIndex] || null);
   renderFrameStack(snapshot.frames || []);
@@ -497,6 +501,69 @@ function selectStep(index) {
   renderStepConsole(safeIndex);
   updateStepControls();
   redrawSceneConnections();
+}
+
+function renderStepInputNote(inputEvents) {
+  if (!dom.stepInputNote) {
+    return;
+  }
+
+  const events = Array.isArray(inputEvents)
+    ? inputEvents.filter((event) => event && typeof event.value === "string")
+    : [];
+
+  dom.stepInputNote.innerHTML = "";
+  dom.stepInputNote.hidden = !events.length;
+
+  if (!events.length) {
+    return;
+  }
+
+  const title = document.createElement("p");
+  title.className = "step-input-title";
+  title.textContent = "\uC785\uB825 \uAE30\uB85D";
+
+  const list = document.createElement("div");
+  list.className = "step-input-list";
+
+  events.forEach((event) => {
+    const item = document.createElement("div");
+    item.className = "step-input-item";
+
+    const message = document.createElement("p");
+    message.className = "step-input-text";
+    message.append("\uC5EC\uAE30\uC11C \uC0AC\uC6A9\uC790\uAC00 ");
+
+    const value = document.createElement("span");
+    value.className = "step-input-value";
+    value.textContent = formatInputReplayValue(event.value);
+    message.append(value, "\uC744 \uC785\uB825\uD588\uC2B5\uB2C8\uB2E4.");
+    item.appendChild(message);
+
+    const promptText = normalizeInputPrompt(event.prompt);
+    if (promptText) {
+      const prompt = document.createElement("p");
+      prompt.className = "step-input-prompt";
+      prompt.textContent = `\uC9C8\uBB38: ${promptText}`;
+      item.appendChild(prompt);
+    }
+
+    list.appendChild(item);
+  });
+
+  dom.stepInputNote.append(title, list);
+}
+
+function formatInputReplayValue(value) {
+  if (value === "") {
+    return "(\uBE48 \uAC12)";
+  }
+
+  return String(value);
+}
+
+function normalizeInputPrompt(promptText) {
+  return String(promptText || "").replace(/\s+/g, " ").trim();
 }
 
 function updateStepControls() {
@@ -2113,14 +2180,51 @@ __steps_truncated = False
 __trace_state = {}
 __trace_event_count = 0
 __trace_started_at = time.perf_counter()
+__trace_paused_duration = 0.0
+__pending_input_events = []
 
 class __ExecutionLimitError(Exception):
     pass
 
+def __find_student_frame():
+    frame = inspect.currentframe()
+    try:
+        current = frame.f_back if frame is not None else None
+        while current is not None:
+            if current.f_code.co_filename == '<student_code>':
+                return current
+            current = current.f_back
+    finally:
+        del frame
+    return None
+
+def __find_student_location():
+    current = __find_student_frame()
+    if current is None:
+        return {'line': 0, 'frame_label': 'Global Frame'}
+    return {
+        'line': current.f_lineno,
+        'frame_label': 'Global Frame' if current.f_code.co_name == '<module>' else current.f_code.co_name,
+    }
+
 async def __codex_input(prompt=''):
-    sys.stdout.write(str(prompt))
-    result = await js._js_input(str(prompt))
-    sys.stdout.write(str(result) + "\\n")
+    global __trace_paused_duration
+    prompt_text = str(prompt)
+    input_location = __find_student_location()
+    sys.stdout.write(prompt_text)
+    wait_started_at = time.perf_counter()
+    try:
+        result = await js._js_input(prompt_text)
+    finally:
+        __trace_paused_duration += time.perf_counter() - wait_started_at
+    result_text = str(result)
+    sys.stdout.write(result_text + "\\n")
+    __record_input_event({
+        'line': input_location['line'],
+        'frame_label': input_location['frame_label'],
+        'prompt': prompt_text,
+        'value': result_text,
+    })
     return result
 
 async def __codex_maybe_await(value):
@@ -2166,6 +2270,72 @@ class __CodexInputTransformer(ast.NodeTransformer):
             )
             return ast.copy_location(ast.Await(value=wrapped), node)
         return node
+
+def __is_awaited_input_call(node):
+    if not isinstance(node, ast.Await):
+        return False
+    wrapped = node.value
+    if not isinstance(wrapped, ast.Call):
+        return False
+    if not isinstance(wrapped.func, ast.Name) or wrapped.func.id != '__codex_maybe_await':
+        return False
+    if not wrapped.args:
+        return False
+    original = wrapped.args[0]
+    if isinstance(original, ast.Call):
+        is_input_name = isinstance(original.func, ast.Name) and original.func.id == 'input'
+        is_builtins_input = (
+            isinstance(original.func, ast.Attribute)
+            and isinstance(original.func.value, ast.Name)
+            and original.func.value.id == 'builtins'
+            and original.func.attr == 'input'
+        )
+        return is_input_name or is_builtins_input
+    return False
+
+def __statement_contains_awaited_input(statement):
+    for child in ast.walk(statement):
+        if __is_awaited_input_call(child):
+            return True
+    return False
+
+def __make_finalize_step_expr(line_number, template_node):
+    expr = ast.Expr(
+        value=ast.Call(
+            func=ast.Name(id='__codex_finalize_input_step', ctx=ast.Load()),
+            args=[ast.Constant(value=line_number)],
+            keywords=[],
+        )
+    )
+    expr = ast.copy_location(expr, template_node)
+    return expr
+
+def __inject_input_finalize_steps(statements):
+    updated = []
+    for statement in statements:
+        __inject_input_finalize_steps_into_node(statement)
+        updated.append(statement)
+        if __statement_contains_awaited_input(statement):
+            updated.append(__make_finalize_step_expr(getattr(statement, 'lineno', 0) or 0, statement))
+    return updated
+
+def __inject_input_finalize_steps_into_node(node):
+    for field_name in ('body', 'orelse', 'finalbody'):
+        value = getattr(node, field_name, None)
+        if isinstance(value, list):
+            setattr(node, field_name, __inject_input_finalize_steps(value))
+
+    handlers = getattr(node, 'handlers', None)
+    if isinstance(handlers, list):
+        for handler in handlers:
+            if isinstance(handler.body, list):
+                handler.body = __inject_input_finalize_steps(handler.body)
+
+    cases = getattr(node, 'cases', None)
+    if isinstance(cases, list):
+        for case in cases:
+            if isinstance(case.body, list):
+                case.body = __inject_input_finalize_steps(case.body)
 
 def __short_repr(value, limit=80):
     text = repr(value)
@@ -2270,6 +2440,62 @@ def __build_stack(frame):
     stack.reverse()
     return stack
 
+def __record_input_event(event):
+    for step in reversed(__steps):
+        if step.get('line') != event.get('line'):
+            continue
+        if step.get('frame_label') != event.get('frame_label'):
+            continue
+        step.setdefault('input_events', []).append(event)
+        return
+    __pending_input_events.append(event)
+
+def __build_step_payload(executed_line, frame, consume_pending_input_events=True):
+    frames = __build_stack(frame)
+    active_locals = frames[-1]['locals'] if frames else []
+    active_label = frames[-1]['label'] if frames else 'Global Frame'
+    input_events = []
+    if consume_pending_input_events and __pending_input_events:
+        remaining_events = []
+        for event in __pending_input_events:
+            event_line = event.get('line', 0)
+            event_frame_label = event.get('frame_label', active_label)
+            if event_line in (0, executed_line) and event_frame_label == active_label:
+                input_events.append(event)
+            else:
+                remaining_events.append(event)
+        __pending_input_events[:] = remaining_events
+    return {
+        'line': executed_line,
+        'globals': __collect_variables(__scope),
+        'frames': frames,
+        'active_locals': active_locals,
+        'frame_label': active_label,
+        'stdout': __stdout.getvalue(),
+        'stderr': __stderr.getvalue(),
+        'input_events': input_events,
+    }
+
+def __codex_finalize_input_step(executed_line):
+    frame = __find_student_frame()
+    if frame is None:
+        return
+
+    payload = __build_step_payload(executed_line, frame, consume_pending_input_events=False)
+    for step in reversed(__steps):
+        if step.get('line') != executed_line:
+            continue
+        if step.get('frame_label') != payload.get('frame_label'):
+            continue
+        if not step.get('input_events'):
+            continue
+        input_events = step.get('input_events', [])
+        step.update(payload)
+        step['input_events'] = input_events
+        return
+
+    __append_step(executed_line, frame)
+
 def __append_step(executed_line, frame):
     global __steps_truncated
     if __steps_truncated:
@@ -2278,18 +2504,7 @@ def __append_step(executed_line, frame):
         __steps_truncated = True
         return
 
-    frames = __build_stack(frame)
-    active_locals = frames[-1]['locals'] if frames else []
-    active_label = frames[-1]['label'] if frames else 'Global Frame'
-    __steps.append({
-        'line': executed_line,
-        'globals': __collect_variables(__scope),
-        'frames': frames,
-        'active_locals': active_locals,
-        'frame_label': active_label,
-        'stdout': __stdout.getvalue(),
-        'stderr': __stderr.getvalue(),
-    })
+    __steps.append(__build_step_payload(executed_line, frame))
 
 def __guard_execution_limit():
     global __trace_event_count
@@ -2300,7 +2515,7 @@ def __guard_execution_limit():
             '실행이 너무 오래 계속되고 있어 중단했습니다. 무한 반복문일 수 있으니 조건이나 반복 횟수를 확인해 주세요.'
         )
 
-    if time.perf_counter() - __trace_started_at > __EXECUTION_TIME_LIMIT:
+    if time.perf_counter() - __trace_started_at - __trace_paused_duration > __EXECUTION_TIME_LIMIT:
         raise __ExecutionLimitError(
             '실행 시간이 너무 길어 중단했습니다. while 문이나 반복 조건을 다시 확인해 주세요.'
         )
@@ -2332,6 +2547,7 @@ def __tracer(frame, event, arg):
 __scope = {
     '__name__': '__main__',
     '__codex_maybe_await': __codex_maybe_await,
+    '__codex_finalize_input_step': __codex_finalize_input_step,
 }
 __stdout = io.StringIO()
 __stderr = io.StringIO()
@@ -2348,6 +2564,7 @@ try:
         raise SyntaxError(
             f"현재 학습 도구는 일반 함수 내부의 input()을 아직 지원하지 않습니다. input()을 함수 바깥 최상위 코드로 옮겨 주세요. (line {__line})"
         )
+    __tree.body = __inject_input_finalize_steps(__tree.body)
     ast.fix_missing_locations(__tree)
     __code = compile(__tree, filename='<student_code>', mode='exec', flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT)
     sys.settrace(__tracer)
@@ -2387,6 +2604,17 @@ function wait(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function setInputWaitingState(isWaiting) {
+  if (!state.isRunning) {
+    return;
+  }
+
+  setEngineStatus(
+    isWaiting ? "\uC785\uB825 \uB300\uAE30 \uC911" : "\uCF54\uB4DC \uC2E4\uD589 \uC911",
+    isWaiting ? "waiting" : "running"
+  );
+}
+
 function submitInput() {
   if (!state.inputResolve) {
     return;
@@ -2397,6 +2625,7 @@ function submitInput() {
   state.inputResolve = null;
   dom.inputField.value = "";
   dom.inputModal.hidden = true;
+  setInputWaitingState(false);
   resolve(value);
 }
 
@@ -2409,6 +2638,7 @@ window._js_input = function _jsInput(promptText) {
     state.inputResolve = resolve;
     dom.inputPrompt.textContent = promptText || "입력값을 적어주세요";
     dom.inputModal.hidden = false;
+    setInputWaitingState(true);
     window.setTimeout(() => dom.inputField.focus(), 30);
   });
 };

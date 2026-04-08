@@ -243,6 +243,11 @@ textarea,
   background: rgba(224, 239, 255, 0.95);
 }
 
+.status-waiting {
+  color: #8b6b24;
+  background: rgba(255, 244, 214, 0.95);
+}
+
 .status-warning,
 .status-error {
   color: var(--error);
@@ -547,6 +552,63 @@ textarea,
   line-height: 1.7;
   color: var(--text-main);
   word-break: break-word;
+}
+
+.step-input-note {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: rgba(239, 249, 247, 0.92);
+  border: 1px solid rgba(79, 185, 175, 0.18);
+}
+
+.step-input-title {
+  margin: 0;
+  font-size: 0.86rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #2b7f78;
+}
+
+.step-input-list {
+  display: grid;
+  gap: 8px;
+}
+
+.step-input-item {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(136, 170, 193, 0.14);
+}
+
+.step-input-text,
+.step-input-prompt {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.step-input-text {
+  color: var(--text-main);
+}
+
+.step-input-prompt {
+  margin-top: 4px;
+  color: var(--text-soft);
+  font-size: 0.92rem;
+  word-break: break-word;
+}
+
+.step-input-value {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 243, 198, 0.92);
+  color: #8b6b24;
+  font-family: "Fira Code", "Consolas", monospace;
+  font-size: 0.92rem;
 }
 
 .frame-stack {
