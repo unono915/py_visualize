@@ -156,6 +156,7 @@ function cacheDom() {
   dom.stepLineBadge = document.getElementById("stepLineBadge");
   dom.stepPhaseText = document.getElementById("stepPhaseText");
   dom.stepLineText = document.getElementById("stepLineText");
+  dom.stepNarrationText = document.getElementById("stepNarrationText");
   dom.stepInputNote = document.getElementById("stepInputNote");
   dom.sceneCodeLine = document.getElementById("sceneCodeLine");
   dom.frameStack = document.getElementById("frameStack");
@@ -462,6 +463,7 @@ function clearStepExplorer() {
   dom.stepLineBadge.textContent = "0행";
   dom.stepPhaseText.textContent = "실행 기록 없음";
   dom.stepLineText.textContent = "코드를 실행하면 각 줄이 끝날 때마다 변수 변화가 기록됩니다.";
+  dom.stepNarrationText.textContent = "지금 단계에서 어떤 변화가 일어났는지 학생용 문장으로 설명합니다.";
   dom.stepInputNote.innerHTML = "";
   dom.stepInputNote.hidden = true;
   resetSceneCodeLine();
@@ -492,6 +494,7 @@ function selectStep(index) {
   dom.stepLineBadge.textContent = `${snapshot.line}행`;
   dom.stepPhaseText.textContent = `${snapshot.frame_label} 실행 후`;
   dom.stepLineText.textContent = getSourceLine(snapshot.line);
+  renderStepNarration(snapshot, state.stepDiffs[safeIndex] || null, safeIndex);
   renderStepInputNote(snapshot.input_events || []);
   updateLineNumbers();
   renderSceneCodeLine(snapshot, state.stepDiffs[safeIndex] || null);
@@ -501,6 +504,127 @@ function selectStep(index) {
   renderStepConsole(safeIndex);
   updateStepControls();
   redrawSceneConnections();
+}
+
+function renderStepNarration(snapshot, diff, stepIndex) {
+  if (!dom.stepNarrationText) {
+    return;
+  }
+
+  dom.stepNarrationText.textContent = buildStepNarration(snapshot, diff, stepIndex);
+}
+
+function buildStepNarration(snapshot, diff, stepIndex) {
+  const previousSnapshot = stepIndex > 0 ? state.executionSteps[stepIndex - 1] || null : null;
+  const lineText = getRawSourceLine(snapshot?.line).trim();
+  const currentFrameLabel = snapshot?.frame_label || "Global Frame";
+  const previousFrameLabel = previousSnapshot?.frame_label || "Global Frame";
+  const currentFrames = Array.isArray(snapshot?.frames) ? snapshot.frames : [];
+  const previousFrames = Array.isArray(previousSnapshot?.frames) ? previousSnapshot.frames : [];
+  const previousVariables = previousSnapshot?.globals || [];
+  const currentVariables = snapshot?.globals || [];
+  const created = diff?.created || [];
+  const updated = diff?.updated || [];
+  const deleted = diff?.deleted || [];
+  const inputEvents = snapshot?.input_events || [];
+  const consoleDelta = getStepConsoleDelta(previousSnapshot, snapshot);
+  const addedConsoleLines = getConsoleLineCount(consoleDelta);
+
+  if (inputEvents.length) {
+    if (created.length === 1) {
+      return `입력받은 값을 ${created[0]} 변수에 저장했습니다.`;
+    }
+
+    if (updated.length === 1) {
+      return `${updated[0]} 변수에 새 입력값을 저장했습니다.`;
+    }
+
+    return "입력한 값을 다음 계산에 사용할 수 있도록 저장했습니다.";
+  }
+
+  if (previousFrames.length < currentFrames.length && currentFrameLabel !== "Global Frame") {
+    return `${currentFrameLabel} 함수 안으로 들어와 지역 변수의 변화를 살펴봅니다.`;
+  }
+
+  if (previousFrames.length > currentFrames.length && previousFrameLabel !== "Global Frame") {
+    return `${previousFrameLabel} 함수 실행이 끝나고 바깥 코드로 돌아왔습니다.`;
+  }
+
+  if (lineText.startsWith("return ")) {
+    return "함수에서 계산한 값을 돌려주고 호출한 곳으로 돌아갈 준비를 합니다.";
+  }
+
+  if (/^for\b/.test(lineText)) {
+    const loopVariable = [...created, ...updated].find((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name));
+    if (loopVariable) {
+      const variable = findVariableByName(currentVariables, loopVariable);
+      const value = formatNarrationValue(variable);
+      return value
+        ? `반복문이 다음 값을 꺼내 ${loopVariable}의 값을 ${value}로 정했습니다.`
+        : `반복문이 다음 차례의 값을 꺼내 ${loopVariable}에 넣었습니다.`;
+    }
+
+    return "반복문이 다음 차례의 값을 꺼내 실행을 이어갑니다.";
+  }
+
+  const appendMatch = lineText.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\.append\s*\(/);
+  if (appendMatch) {
+    return `${appendMatch[1]} 리스트에 새 값을 하나 추가했습니다.`;
+  }
+
+  const plusAssignMatch = lineText.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\+=/);
+  if (plusAssignMatch) {
+    const variable = findVariableByName(currentVariables, plusAssignMatch[1]);
+    const value = formatNarrationValue(variable);
+    return `${plusAssignMatch[1]}에 값을 더했습니다.${value ? ` 현재 값은 ${value}입니다.` : ""}`;
+  }
+
+  if (lineText.includes("print(") || addedConsoleLines > 0) {
+    if (addedConsoleLines <= 1) {
+      return "print()가 실행되어 콘솔에 한 줄이 출력되었습니다.";
+    }
+
+    return `print()가 실행되어 콘솔에 ${addedConsoleLines}줄이 추가되었습니다.`;
+  }
+
+  if (created.length === 1) {
+    const variable = findVariableByName(currentVariables, created[0]);
+    if (normalizeType(variable?.type) === "function") {
+      return `${created[0]} 함수를 새로 만들었습니다.`;
+    }
+
+    const value = formatNarrationValue(variable);
+    return value
+      ? `${created[0]} 변수가 새로 만들어졌습니다. 현재 값은 ${value}입니다.`
+      : `${created[0]} 변수가 새로 만들어졌습니다.`;
+  }
+
+  if (created.length > 1) {
+    return `${formatNameList(created)} 변수가 새로 만들어졌습니다.`;
+  }
+
+  if (updated.length === 1) {
+    const currentVariable = findVariableByName(currentVariables, updated[0]);
+    const previousVariable = findVariableByName(previousVariables, updated[0]);
+    const beforeValue = formatNarrationValue(previousVariable);
+    const afterValue = formatNarrationValue(currentVariable);
+
+    if (beforeValue && afterValue) {
+      return `${updated[0]} 값이 ${beforeValue}에서 ${afterValue}로 바뀌었습니다.`;
+    }
+
+    return `${updated[0]} 값이 바뀌었습니다.`;
+  }
+
+  if (updated.length > 1) {
+    return `${formatNameList(updated)} 값이 함께 바뀌었습니다.`;
+  }
+
+  if (deleted.length > 0) {
+    return `${formatNameList(deleted)} 변수는 현재 범위에서 보이지 않게 되었습니다.`;
+  }
+
+  return "이 줄 실행 후 현재 변수 상태를 확인합니다.";
 }
 
 function renderStepInputNote(inputEvents) {
@@ -1108,6 +1232,28 @@ function getStepConsolePayload(stepIndex) {
   };
 }
 
+function getStepConsoleDelta(previousStep, currentStep) {
+  const previousStdout = previousStep?.stdout || "";
+  const currentStdout = currentStep?.stdout || "";
+
+  if (currentStdout.startsWith(previousStdout)) {
+    return currentStdout.slice(previousStdout.length);
+  }
+
+  return currentStdout;
+}
+
+function getConsoleLineCount(text) {
+  if (!text) {
+    return 0;
+  }
+
+  return text
+    .split(/\r?\n/)
+    .filter((line, index, lines) => !(index === lines.length - 1 && line === ""))
+    .length;
+}
+
 function buildStepDiffs(steps) {
   return steps.map((step, index) =>
     diffStepVariables(index > 0 ? steps[index - 1]?.globals || [] : [], step?.globals || [])
@@ -1151,6 +1297,10 @@ function buildVariableLookup(variables) {
   return lookup;
 }
 
+function findVariableByName(variables, name) {
+  return (variables || []).find((variable) => variable.name === name) || null;
+}
+
 function getVariableSignature(variable) {
   return JSON.stringify({
     type: variable.type,
@@ -1160,6 +1310,48 @@ function getVariableSignature(variable) {
     signature: variable.signature ?? null,
     truncated: Boolean(variable.truncated),
   });
+}
+
+function formatNarrationValue(variable) {
+  if (!variable) {
+    return "";
+  }
+
+  const normalizedType = normalizeType(variable.type);
+
+  if (normalizedType === "function") {
+    return "";
+  }
+
+  if (["list", "tuple", "set"].includes(normalizedType)) {
+    const count = variable.items?.length ?? 0;
+    const suffix = variable.truncated ? "+" : "";
+    return `${TYPE_LABELS[normalizedType]} ${count}${suffix}개`;
+  }
+
+  if (normalizedType === "dict") {
+    const count = variable.entries?.length ?? 0;
+    const suffix = variable.truncated ? "+" : "";
+    return `dict ${count}${suffix}쌍`;
+  }
+
+  return variable.repr || "";
+}
+
+function formatNameList(names) {
+  if (!Array.isArray(names) || !names.length) {
+    return "";
+  }
+
+  if (names.length === 1) {
+    return names[0];
+  }
+
+  if (names.length === 2) {
+    return `${names[0]}와 ${names[1]}`;
+  }
+
+  return `${names.slice(0, -1).join(", ")}, ${names[names.length - 1]}`;
 }
 
 function getVariableChangeTone(variableName, diff) {

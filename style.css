@@ -554,6 +554,32 @@ textarea,
   word-break: break-word;
 }
 
+.step-narration {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: rgba(255, 244, 214, 0.9);
+  border: 1px solid rgba(241, 188, 87, 0.22);
+}
+
+.step-narration-title,
+.step-narration-text {
+  margin: 0;
+}
+
+.step-narration-title {
+  font-size: 0.86rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #8b6b24;
+}
+
+.step-narration-text {
+  line-height: 1.65;
+  color: var(--text-main);
+}
+
 .step-input-note {
   display: grid;
   gap: 10px;
