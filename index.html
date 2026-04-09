@@ -119,6 +119,9 @@
             <button id="firstStepButton" class="step-button" type="button">처음</button>
             <button id="prevStepButton" class="step-button" type="button">이전</button>
             <button id="nextStepButton" class="step-button" type="button">다음</button>
+            <button id="nextIterationButton" class="step-button step-button-loop" type="button">
+              다음 반복
+            </button>
             <button id="lastStepButton" class="step-button" type="button">마지막</button>
             <label class="speed-control" for="playbackSpeed">
               <span>속도</span>
@@ -142,6 +145,11 @@
             <p id="stepLineText" class="step-line-text">
               코드를 실행하면 각 줄이 끝날 때마다 변수 변화가 기록됩니다.
             </p>
+
+            <div id="loopProgressPanel" class="loop-progress-panel" hidden>
+              <div id="loopProgressChips" class="loop-progress-chips"></div>
+              <p id="loopProgressText" class="loop-progress-text"></p>
+            </div>
 
             <div id="stepNarration" class="step-narration">
               <p class="step-narration-title">이 단계 설명</p>

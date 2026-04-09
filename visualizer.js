@@ -93,6 +93,7 @@ const state = {
   autoInputs: [],
   executionSteps: [],
   stepDiffs: [],
+  loopStepMeta: [],
   playSpeed: 900,
   playTimerId: null,
   currentStepIndex: -1,
@@ -149,6 +150,7 @@ function cacheDom() {
   dom.firstStepButton = document.getElementById("firstStepButton");
   dom.prevStepButton = document.getElementById("prevStepButton");
   dom.nextStepButton = document.getElementById("nextStepButton");
+  dom.nextIterationButton = document.getElementById("nextIterationButton");
   dom.lastStepButton = document.getElementById("lastStepButton");
   dom.playPauseButton = document.getElementById("playPauseButton");
   dom.playbackSpeed = document.getElementById("playbackSpeed");
@@ -156,6 +158,9 @@ function cacheDom() {
   dom.stepLineBadge = document.getElementById("stepLineBadge");
   dom.stepPhaseText = document.getElementById("stepPhaseText");
   dom.stepLineText = document.getElementById("stepLineText");
+  dom.loopProgressPanel = document.getElementById("loopProgressPanel");
+  dom.loopProgressChips = document.getElementById("loopProgressChips");
+  dom.loopProgressText = document.getElementById("loopProgressText");
   dom.stepNarrationText = document.getElementById("stepNarrationText");
   dom.stepInputNote = document.getElementById("stepInputNote");
   dom.sceneCodeLine = document.getElementById("sceneCodeLine");
@@ -187,6 +192,7 @@ function bindEvents() {
   dom.firstStepButton.addEventListener("click", () => navigateToStep(0));
   dom.prevStepButton.addEventListener("click", () => navigateToStep(state.currentStepIndex - 1));
   dom.nextStepButton.addEventListener("click", () => navigateToStep(state.currentStepIndex + 1));
+  dom.nextIterationButton.addEventListener("click", jumpToNextIteration);
   dom.lastStepButton.addEventListener("click", () => navigateToStep(state.executionSteps.length - 1));
   dom.stepRange.addEventListener("input", (event) => {
     navigateToStep(Number(event.target.value));
@@ -429,8 +435,9 @@ async function executeCode(options = {}) {
 function setupStepExplorer(result, source, options = {}) {
   state.executionSteps = result.steps;
   state.stepDiffs = buildStepDiffs(result.steps);
-  state.stepsTruncated = Boolean(result.steps_truncated);
   state.currentSourceLines = source.split("\n");
+  state.loopStepMeta = buildLoopStepMeta(state.executionSteps, state.currentSourceLines);
+  state.stepsTruncated = Boolean(result.steps_truncated);
   state.consolePlaybackEnabled = Boolean(options.consolePlayback);
 
   dom.stepExplorer.hidden = false;
@@ -451,6 +458,7 @@ function clearStepExplorer() {
   resetSceneNodeOverrides();
   state.executionSteps = [];
   state.stepDiffs = [];
+  state.loopStepMeta = [];
   state.currentStepIndex = -1;
   state.stepsTruncated = false;
   state.consolePlaybackEnabled = false;
@@ -463,6 +471,9 @@ function clearStepExplorer() {
   dom.stepLineBadge.textContent = "0행";
   dom.stepPhaseText.textContent = "실행 기록 없음";
   dom.stepLineText.textContent = "코드를 실행하면 각 줄이 끝날 때마다 변수 변화가 기록됩니다.";
+  dom.loopProgressPanel.hidden = true;
+  dom.loopProgressChips.innerHTML = "";
+  dom.loopProgressText.textContent = "";
   dom.stepNarrationText.textContent = "지금 단계에서 어떤 변화가 일어났는지 학생용 문장으로 설명합니다.";
   dom.stepInputNote.innerHTML = "";
   dom.stepInputNote.hidden = true;
@@ -477,6 +488,16 @@ function clearStepExplorer() {
 function navigateToStep(index) {
   stopPlayback();
   selectStep(index);
+}
+
+function jumpToNextIteration() {
+  stopPlayback();
+  const nextIndex = getNextIterationTargetIndex(state.currentStepIndex);
+  if (nextIndex < 0) {
+    return;
+  }
+
+  selectStep(nextIndex);
 }
 
 function selectStep(index) {
@@ -494,6 +515,7 @@ function selectStep(index) {
   dom.stepLineBadge.textContent = `${snapshot.line}행`;
   dom.stepPhaseText.textContent = `${snapshot.frame_label} 실행 후`;
   dom.stepLineText.textContent = getSourceLine(snapshot.line);
+  renderLoopProgress(safeIndex);
   renderStepNarration(snapshot, state.stepDiffs[safeIndex] || null, safeIndex);
   renderStepInputNote(snapshot.input_events || []);
   updateLineNumbers();
@@ -627,6 +649,265 @@ function buildStepNarration(snapshot, diff, stepIndex) {
   return "이 줄 실행 후 현재 변수 상태를 확인합니다.";
 }
 
+function renderLoopProgress(stepIndex) {
+  if (!dom.loopProgressPanel || !dom.loopProgressChips || !dom.loopProgressText) {
+    return;
+  }
+
+  const meta = state.loopStepMeta[stepIndex] || null;
+  dom.loopProgressChips.innerHTML = "";
+  dom.loopProgressText.textContent = "";
+
+  if (!meta) {
+    dom.loopProgressPanel.hidden = true;
+    return;
+  }
+
+  let hasChips = false;
+  meta.activeLoops.forEach((loop) => {
+    const chipText = `${formatLoopDescriptor(loop)} ${loop.iteration}회차`;
+    dom.loopProgressChips.appendChild(createLoopProgressChip(chipText, "active"));
+    hasChips = true;
+  });
+
+  meta.startedLoops.forEach((loop) => {
+    const chipText = `${formatLoopDescriptor(loop)} ${loop.iteration}회차 시작`;
+    dom.loopProgressChips.appendChild(createLoopProgressChip(chipText, "start"));
+    hasChips = true;
+  });
+
+  meta.endedLoops.forEach((loop) => {
+    const chipText = `${formatLoopDescriptor(loop)} 종료`;
+    dom.loopProgressChips.appendChild(createLoopProgressChip(chipText, "end"));
+    hasChips = true;
+  });
+
+  const summary = buildLoopProgressSummary(meta);
+  if (summary) {
+    dom.loopProgressText.textContent = summary;
+  }
+
+  dom.loopProgressPanel.hidden = !hasChips && !summary;
+}
+
+function createLoopProgressChip(text, tone) {
+  const chip = document.createElement("span");
+  chip.className = `loop-progress-chip ${tone}`;
+  chip.textContent = text;
+  return chip;
+}
+
+function buildLoopProgressSummary(meta) {
+  const started = meta.startedLoops[meta.startedLoops.length - 1] || null;
+  if (started) {
+    return `${formatLoopDescriptor(started)}의 ${started.iteration}회차가 시작되었습니다.`;
+  }
+
+  const ended = meta.endedLoops[meta.endedLoops.length - 1] || null;
+  if (ended) {
+    return `${formatLoopDescriptor(ended)} 실행이 끝났습니다.`;
+  }
+
+  const active = meta.activeLoops[meta.activeLoops.length - 1] || null;
+  if (active) {
+    return `현재 ${formatLoopDescriptor(active)}의 ${active.iteration}회차를 실행 중입니다.`;
+  }
+
+  return "";
+}
+
+function formatLoopDescriptor(loop) {
+  const loopName = loop.type === "while" ? "while 문" : "for 문";
+  return `${loop.line}행 ${loopName}`;
+}
+
+function buildLoopStepMeta(steps, sourceLines) {
+  const loopDefinitions = buildLoopDefinitions(sourceLines);
+  if (!loopDefinitions.length) {
+    return steps.map(() => ({
+      activeLoops: [],
+      startedLoops: [],
+      endedLoops: [],
+    }));
+  }
+
+  const loopIterations = new Map(loopDefinitions.map((definition) => [definition.line, 0]));
+  return steps.map((step, index) => {
+    const nextLine = steps[index + 1]?.line ?? null;
+    const startedLoops = [];
+    const endedLoops = [];
+
+    loopDefinitions.forEach((definition) => {
+      const currentIteration = loopIterations.get(definition.line) || 0;
+      const isHeaderStep = step?.line === definition.line;
+      const entersBody =
+        isHeaderStep && nextLine !== null && isLineInLoopBody(definition, nextLine);
+      const exitsLoop = isHeaderStep && !entersBody && currentIteration > 0;
+
+      if (entersBody) {
+        const nextIteration = currentIteration + 1;
+        loopIterations.set(definition.line, nextIteration);
+        startedLoops.push(createLoopSnapshot(definition, nextIteration));
+        return;
+      }
+
+      if (exitsLoop) {
+        endedLoops.push(createLoopSnapshot(definition, currentIteration));
+      }
+    });
+
+    const activeLoops = loopDefinitions
+      .filter((definition) => {
+        const iteration = loopIterations.get(definition.line) || 0;
+        if (iteration <= 0) {
+          return false;
+        }
+
+        if (step?.line === definition.line) {
+          return startedLoops.some((loop) => loop.line === definition.line);
+        }
+
+        return isLineInLoopBody(definition, step?.line || 0);
+      })
+      .map((definition) =>
+        createLoopSnapshot(definition, loopIterations.get(definition.line) || 0)
+      )
+      .sort((left, right) => left.indent - right.indent || left.line - right.line);
+
+    startedLoops.sort((left, right) => left.indent - right.indent || left.line - right.line);
+    endedLoops.sort((left, right) => left.indent - right.indent || left.line - right.line);
+
+    return {
+      activeLoops,
+      startedLoops,
+      endedLoops,
+    };
+  });
+}
+
+function createLoopSnapshot(definition, iteration) {
+  return {
+    line: definition.line,
+    type: definition.type,
+    indent: definition.indent,
+    iteration,
+  };
+}
+
+function buildLoopDefinitions(sourceLines) {
+  const definitions = [];
+
+  sourceLines.forEach((lineText, index) => {
+    const lineNumber = index + 1;
+    const trimmed = String(lineText || "").trim();
+
+    if (!isLoopControlLine(trimmed)) {
+      return;
+    }
+
+    const indent = getLineIndent(lineText);
+    definitions.push({
+      line: lineNumber,
+      type: trimmed.startsWith("while") ? "while" : "for",
+      indent,
+      bodyStart: lineNumber + 1,
+      bodyEnd: findLoopBodyEnd(sourceLines, lineNumber, indent),
+    });
+  });
+
+  return definitions;
+}
+
+function isLoopControlLine(trimmed) {
+  if (!trimmed || trimmed.startsWith("#")) {
+    return false;
+  }
+
+  return /^(for|while)\b.+:\s*$/.test(trimmed);
+}
+
+function getLineIndent(lineText) {
+  let indent = 0;
+  const text = String(lineText || "");
+
+  for (const char of text) {
+    if (char === " ") {
+      indent += 1;
+      continue;
+    }
+
+    if (char === "\t") {
+      indent += 4;
+      continue;
+    }
+
+    break;
+  }
+
+  return indent;
+}
+
+function findLoopBodyEnd(sourceLines, loopLine, loopIndent) {
+  for (let lineNumber = loopLine + 1; lineNumber <= sourceLines.length; lineNumber += 1) {
+    const rawLine = sourceLines[lineNumber - 1] || "";
+    const trimmed = rawLine.trim();
+
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    if (getLineIndent(rawLine) <= loopIndent) {
+      return lineNumber;
+    }
+  }
+
+  return sourceLines.length + 1;
+}
+
+function isLineInLoopBody(definition, lineNumber) {
+  return lineNumber >= definition.bodyStart && lineNumber < definition.bodyEnd;
+}
+
+function getLoopJumpFocus(stepIndex) {
+  if (stepIndex < 0) {
+    return null;
+  }
+
+  const meta = state.loopStepMeta[stepIndex];
+  if (!meta) {
+    return null;
+  }
+
+  if (meta.activeLoops.length) {
+    return meta.activeLoops[meta.activeLoops.length - 1];
+  }
+
+  if (meta.startedLoops.length) {
+    return meta.startedLoops[meta.startedLoops.length - 1];
+  }
+
+  return null;
+}
+
+function getNextIterationTargetIndex(stepIndex) {
+  const focusLoop = getLoopJumpFocus(stepIndex);
+  if (!focusLoop) {
+    return -1;
+  }
+
+  for (let index = stepIndex + 1; index < state.loopStepMeta.length; index += 1) {
+    const startedLoops = state.loopStepMeta[index]?.startedLoops || [];
+    const nextStart = startedLoops.find(
+      (loop) => loop.line === focusLoop.line && loop.iteration > focusLoop.iteration
+    );
+    if (nextStart) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
 function renderStepInputNote(inputEvents) {
   if (!dom.stepInputNote) {
     return;
@@ -694,11 +975,13 @@ function updateStepControls() {
   const hasSteps = state.executionSteps.length > 0;
   const isFirst = state.currentStepIndex <= 0;
   const isLast = state.currentStepIndex >= state.executionSteps.length - 1;
+  const canJumpNextIteration = hasSteps && getNextIterationTargetIndex(state.currentStepIndex) >= 0;
 
   dom.playPauseButton.disabled = !hasSteps;
   dom.firstStepButton.disabled = !hasSteps || isFirst;
   dom.prevStepButton.disabled = !hasSteps || isFirst;
   dom.nextStepButton.disabled = !hasSteps || isLast;
+  dom.nextIterationButton.disabled = !canJumpNextIteration;
   dom.lastStepButton.disabled = !hasSteps || isLast;
   dom.stepRange.disabled = !hasSteps;
   dom.playbackSpeed.disabled = !hasSteps;
@@ -1434,15 +1717,16 @@ function buildSceneLayout(variables) {
   });
 
   const layout = new Map();
-  layoutSceneGroup(groups.get("function"), { xMin: 64, xMax: 88, yMin: 16, yMax: 26, columns: 2 }, layout);
-  layoutSceneGroup(groups.get("mapping"), { xMin: 24, xMax: 36, yMin: 28, yMax: 46, columns: 1 }, layout);
+  // Place nodes from top to bottom so newly created variables appear in the visible upper area first.
+  layoutSceneGroup(groups.get("function"), { xMin: 62, xMax: 88, yMin: 12, yMax: 24, columns: 2 }, layout);
+  layoutSceneGroup(groups.get("scalar"), { xMin: 16, xMax: 86, yMin: 26, yMax: 44, columns: 4 }, layout);
+  layoutSceneGroup(groups.get("mapping"), { xMin: 18, xMax: 38, yMin: 50, yMax: 68, columns: 1 }, layout);
   layoutSceneGroup(
     groups.get("collection"),
-    { xMin: 56, xMax: 84, yMin: 42, yMax: 62, columns: 2 },
+    { xMin: 48, xMax: 86, yMin: 52, yMax: 76, columns: 2 },
     layout
   );
-  layoutSceneGroup(groups.get("scalar"), { xMin: 18, xMax: 84, yMin: 70, yMax: 84, columns: 4 }, layout);
-  layoutSceneGroup(groups.get("other"), { xMin: 16, xMax: 40, yMin: 16, yMax: 30, columns: 1 }, layout);
+  layoutSceneGroup(groups.get("other"), { xMin: 14, xMax: 34, yMin: 74, yMax: 86, columns: 1 }, layout);
 
   return layout;
 }

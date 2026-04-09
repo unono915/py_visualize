@@ -482,6 +482,12 @@ textarea,
   border-color: rgba(237, 137, 54, 0.45);
 }
 
+.step-button-loop {
+  background: linear-gradient(135deg, #eef6ff, #f0f9ff);
+  border-color: rgba(59, 130, 246, 0.28);
+  color: #2b5f9a;
+}
+
 .step-range {
   width: 100%;
   accent-color: #4cb9ad;
@@ -552,6 +558,57 @@ textarea,
   line-height: 1.7;
   color: var(--text-main);
   word-break: break-word;
+}
+
+.loop-progress-panel {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(237, 246, 255, 0.72);
+  border: 1px solid rgba(80, 142, 232, 0.2);
+}
+
+.loop-progress-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.loop-progress-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 0.84rem;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(136, 170, 193, 0.2);
+  color: var(--text-soft);
+}
+
+.loop-progress-chip.active {
+  background: rgba(224, 239, 255, 0.94);
+  border-color: rgba(80, 142, 232, 0.3);
+  color: #2b5f9a;
+}
+
+.loop-progress-chip.start {
+  background: rgba(228, 251, 241, 0.94);
+  border-color: rgba(62, 168, 136, 0.28);
+  color: #2e6d58;
+}
+
+.loop-progress-chip.end {
+  background: rgba(255, 243, 198, 0.96);
+  border-color: rgba(237, 167, 73, 0.3);
+  color: #8b6b24;
+}
+
+.loop-progress-text {
+  margin: 0;
+  color: var(--text-main);
+  line-height: 1.6;
 }
 
 .step-narration {
