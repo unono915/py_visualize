@@ -32,6 +32,26 @@ student['city'] = '서울'
 print(student)`,
   },
   {
+    id: "condition",
+    label: "조건문",
+    code: `temp = 28
+is_raining = False
+
+if temp >= 30:
+    outfit = '반팔'
+elif temp >= 20 and not is_raining:
+    outfit = '긴팔'
+else:
+    outfit = '겉옷'
+
+if is_raining:
+    action = '우산 챙기기'
+else:
+    action = '가벼운 외출'
+
+print(f'오늘 추천: {outfit}, {action}')`,
+  },
+  {
     id: "loop",
     label: "반복문",
     code: `total = 0
@@ -94,6 +114,7 @@ const state = {
   executionSteps: [],
   stepDiffs: [],
   loopStepMeta: [],
+  conditionStepMeta: [],
   playSpeed: 900,
   playTimerId: null,
   currentStepIndex: -1,
@@ -161,6 +182,9 @@ function cacheDom() {
   dom.loopProgressPanel = document.getElementById("loopProgressPanel");
   dom.loopProgressChips = document.getElementById("loopProgressChips");
   dom.loopProgressText = document.getElementById("loopProgressText");
+  dom.conditionProgressPanel = document.getElementById("conditionProgressPanel");
+  dom.conditionProgressChips = document.getElementById("conditionProgressChips");
+  dom.conditionProgressText = document.getElementById("conditionProgressText");
   dom.stepNarrationText = document.getElementById("stepNarrationText");
   dom.stepInputNote = document.getElementById("stepInputNote");
   dom.sceneCodeLine = document.getElementById("sceneCodeLine");
@@ -437,6 +461,7 @@ function setupStepExplorer(result, source, options = {}) {
   state.stepDiffs = buildStepDiffs(result.steps);
   state.currentSourceLines = source.split("\n");
   state.loopStepMeta = buildLoopStepMeta(state.executionSteps, state.currentSourceLines);
+  state.conditionStepMeta = buildConditionStepMeta(state.executionSteps, state.currentSourceLines);
   state.stepsTruncated = Boolean(result.steps_truncated);
   state.consolePlaybackEnabled = Boolean(options.consolePlayback);
 
@@ -459,6 +484,7 @@ function clearStepExplorer() {
   state.executionSteps = [];
   state.stepDiffs = [];
   state.loopStepMeta = [];
+  state.conditionStepMeta = [];
   state.currentStepIndex = -1;
   state.stepsTruncated = false;
   state.consolePlaybackEnabled = false;
@@ -474,6 +500,9 @@ function clearStepExplorer() {
   dom.loopProgressPanel.hidden = true;
   dom.loopProgressChips.innerHTML = "";
   dom.loopProgressText.textContent = "";
+  dom.conditionProgressPanel.hidden = true;
+  dom.conditionProgressChips.innerHTML = "";
+  dom.conditionProgressText.textContent = "";
   dom.stepNarrationText.textContent = "지금 단계에서 어떤 변화가 일어났는지 학생용 문장으로 설명합니다.";
   dom.stepInputNote.innerHTML = "";
   dom.stepInputNote.hidden = true;
@@ -516,6 +545,7 @@ function selectStep(index) {
   dom.stepPhaseText.textContent = `${snapshot.frame_label} 실행 후`;
   dom.stepLineText.textContent = getSourceLine(snapshot.line);
   renderLoopProgress(safeIndex);
+  renderConditionProgress(safeIndex);
   renderStepNarration(snapshot, state.stepDiffs[safeIndex] || null, safeIndex);
   renderStepInputNote(snapshot.input_events || []);
   updateLineNumbers();
@@ -551,6 +581,7 @@ function buildStepNarration(snapshot, diff, stepIndex) {
   const inputEvents = snapshot?.input_events || [];
   const consoleDelta = getStepConsoleDelta(previousSnapshot, snapshot);
   const addedConsoleLines = getConsoleLineCount(consoleDelta);
+  const conditionDecision = state.conditionStepMeta[stepIndex]?.decision || null;
 
   if (inputEvents.length) {
     if (created.length === 1) {
@@ -574,6 +605,10 @@ function buildStepNarration(snapshot, diff, stepIndex) {
 
   if (lineText.startsWith("return ")) {
     return "함수에서 계산한 값을 돌려주고 호출한 곳으로 돌아갈 준비를 합니다.";
+  }
+
+  if (conditionDecision) {
+    return buildConditionNarration(conditionDecision);
   }
 
   if (/^for\b/.test(lineText)) {
@@ -690,6 +725,48 @@ function renderLoopProgress(stepIndex) {
   dom.loopProgressPanel.hidden = !hasChips && !summary;
 }
 
+function renderConditionProgress(stepIndex) {
+  if (!dom.conditionProgressPanel || !dom.conditionProgressChips || !dom.conditionProgressText) {
+    return;
+  }
+
+  const decision = state.conditionStepMeta[stepIndex]?.decision || null;
+  dom.conditionProgressChips.innerHTML = "";
+  dom.conditionProgressText.textContent = "";
+
+  if (!decision) {
+    dom.conditionProgressPanel.hidden = true;
+    return;
+  }
+
+  const branchLabel = `${decision.line}행 ${formatConditionBranchLabel(decision.branchType)}`;
+  dom.conditionProgressChips.appendChild(createConditionProgressChip(branchLabel, "branch"));
+
+  if (decision.branchType === "else") {
+    dom.conditionProgressChips.appendChild(createConditionProgressChip("앞 조건 거짓", "decision-false"));
+  } else if (decision.outcome === "taken") {
+    dom.conditionProgressChips.appendChild(createConditionProgressChip("조건 참 (True)", "decision-true"));
+  } else {
+    dom.conditionProgressChips.appendChild(createConditionProgressChip("조건 거짓 (False)", "decision-false"));
+  }
+
+  if (decision.outcome === "skipped" && decision.nextBranchType === "elif") {
+    dom.conditionProgressChips.appendChild(createConditionProgressChip("다음 elif 확인", "next-branch"));
+  } else if (decision.outcome === "skipped" && decision.nextBranchType === "else") {
+    dom.conditionProgressChips.appendChild(createConditionProgressChip("else 분기 이동", "next-branch"));
+  }
+
+  dom.conditionProgressText.textContent = buildConditionDecisionSummary(decision);
+  dom.conditionProgressPanel.hidden = false;
+}
+
+function createConditionProgressChip(text, tone) {
+  const chip = document.createElement("span");
+  chip.className = `condition-progress-chip ${tone}`;
+  chip.textContent = text;
+  return chip;
+}
+
 function createLoopProgressChip(text, tone) {
   const chip = document.createElement("span");
   chip.className = `loop-progress-chip ${tone}`;
@@ -719,6 +796,217 @@ function buildLoopProgressSummary(meta) {
 function formatLoopDescriptor(loop) {
   const loopName = loop.type === "while" ? "while 문" : "for 문";
   return `${loop.line}행 ${loopName}`;
+}
+
+function buildConditionStepMeta(steps, sourceLines) {
+  const chains = buildConditionChains(sourceLines);
+  if (!chains.length) {
+    return steps.map(() => ({ decision: null }));
+  }
+
+  const headerLookup = new Map();
+  chains.forEach((chain) => {
+    chain.branches.forEach((branch, index) => {
+      headerLookup.set(branch.line, {
+        chain,
+        branch,
+        index,
+      });
+    });
+  });
+
+  return steps.map((step, index) => {
+    const lookup = headerLookup.get(step?.line || 0);
+    if (!lookup) {
+      return { decision: null };
+    }
+
+    const nextLine = steps[index + 1]?.line ?? null;
+    const entersBody =
+      nextLine !== null && isLineInConditionBody(lookup.branch, nextLine);
+    const nextBranch = lookup.chain.branches[lookup.index + 1] || null;
+
+    return {
+      decision: {
+        line: lookup.branch.line,
+        branchType: lookup.branch.type,
+        expression: lookup.branch.expression,
+        outcome: entersBody ? "taken" : "skipped",
+        nextBranchType: nextBranch?.type || null,
+      },
+    };
+  });
+}
+
+function buildConditionChains(sourceLines) {
+  const branches = [];
+  sourceLines.forEach((lineText, index) => {
+    const trimmed = String(lineText || "").trim();
+    const branchType = getConditionBranchType(trimmed);
+    if (!branchType) {
+      return;
+    }
+
+    const line = index + 1;
+    const indent = getLineIndent(lineText);
+    branches.push({
+      line,
+      type: branchType,
+      indent,
+      expression: extractConditionExpression(trimmed, branchType),
+      bodyStart: line + 1,
+      bodyEnd: findConditionBodyEnd(sourceLines, line, indent),
+    });
+  });
+
+  const byLine = new Map(branches.map((branch) => [branch.line, branch]));
+  const visited = new Set();
+  const chains = [];
+
+  branches.forEach((branch) => {
+    if (branch.type !== "if" || visited.has(branch.line)) {
+      return;
+    }
+
+    const chain = {
+      line: branch.line,
+      indent: branch.indent,
+      branches: [],
+    };
+
+    let current = branch;
+    while (current && !visited.has(current.line)) {
+      visited.add(current.line);
+      chain.branches.push(current);
+
+      if (current.type === "else") {
+        break;
+      }
+
+      const nextBranch = byLine.get(current.bodyEnd);
+      if (!nextBranch) {
+        break;
+      }
+
+      if (nextBranch.indent !== chain.indent) {
+        break;
+      }
+
+      if (!["elif", "else"].includes(nextBranch.type)) {
+        break;
+      }
+
+      current = nextBranch;
+    }
+
+    chains.push(chain);
+  });
+
+  return chains;
+}
+
+function getConditionBranchType(trimmed) {
+  if (!trimmed || trimmed.startsWith("#")) {
+    return null;
+  }
+
+  if (/^if\b.+:\s*$/.test(trimmed)) {
+    return "if";
+  }
+
+  if (/^elif\b.+:\s*$/.test(trimmed)) {
+    return "elif";
+  }
+
+  if (/^else\s*:\s*$/.test(trimmed)) {
+    return "else";
+  }
+
+  return null;
+}
+
+function extractConditionExpression(trimmed, branchType) {
+  if (branchType === "if") {
+    return trimmed.replace(/^if\s+/, "").replace(/:\s*$/, "").trim();
+  }
+
+  if (branchType === "elif") {
+    return trimmed.replace(/^elif\s+/, "").replace(/:\s*$/, "").trim();
+  }
+
+  return "";
+}
+
+function findConditionBodyEnd(sourceLines, branchLine, branchIndent) {
+  for (let lineNumber = branchLine + 1; lineNumber <= sourceLines.length; lineNumber += 1) {
+    const rawLine = sourceLines[lineNumber - 1] || "";
+    const trimmed = rawLine.trim();
+
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    if (getLineIndent(rawLine) <= branchIndent) {
+      return lineNumber;
+    }
+  }
+
+  return sourceLines.length + 1;
+}
+
+function isLineInConditionBody(branch, lineNumber) {
+  return lineNumber >= branch.bodyStart && lineNumber < branch.bodyEnd;
+}
+
+function buildConditionNarration(decision) {
+  return buildConditionDecisionSummary(decision);
+}
+
+function buildConditionDecisionSummary(decision) {
+  const branchLabel = formatConditionBranchLabel(decision.branchType);
+  const expressionText = formatConditionExpression(decision.expression);
+
+  if (decision.branchType === "else") {
+    if (decision.outcome === "taken") {
+      return "앞의 if/elif 조건이 모두 거짓이라 else 블록을 실행합니다.";
+    }
+
+    return `${branchLabel}를 확인하고 다음 코드로 넘어갑니다.`;
+  }
+
+  if (decision.outcome === "taken") {
+    return `${branchLabel}의 조건${expressionText}이 참이라 해당 블록을 실행합니다.`;
+  }
+
+  if (decision.nextBranchType === "elif") {
+    return `${branchLabel}의 조건${expressionText}이 거짓이라 다음 elif 조건을 확인합니다.`;
+  }
+
+  if (decision.nextBranchType === "else") {
+    return `${branchLabel}의 조건${expressionText}이 거짓이라 else 분기로 이동합니다.`;
+  }
+
+  return `${branchLabel}의 조건${expressionText}이 거짓이라 이 조건문 블록은 실행되지 않습니다.`;
+}
+
+function formatConditionBranchLabel(branchType) {
+  if (branchType === "elif") {
+    return "elif 분기";
+  }
+
+  if (branchType === "else") {
+    return "else 분기";
+  }
+
+  return "if 분기";
+}
+
+function formatConditionExpression(expression) {
+  if (!expression) {
+    return "";
+  }
+
+  return ` (${expression})`;
 }
 
 function buildLoopStepMeta(steps, sourceLines) {
@@ -1489,9 +1777,124 @@ function renderConsole(stdout, errorText) {
     block.className = "console-stream stderr";
     block.textContent = errorText;
     dom.consoleOutput.appendChild(block);
+
+    const hint = buildStudentErrorHint(errorText);
+    if (hint) {
+      dom.consoleOutput.appendChild(createErrorHintCard(hint));
+    }
   }
 
   dom.consoleOutput.scrollTop = dom.consoleOutput.scrollHeight;
+}
+
+function createErrorHintCard(hint) {
+  const card = document.createElement("section");
+  card.className = "console-hint";
+
+  const title = document.createElement("p");
+  title.className = "console-hint-title";
+  title.textContent = "교정 힌트";
+  card.appendChild(title);
+
+  const body = document.createElement("p");
+  body.className = "console-hint-body";
+  body.textContent = hint.message;
+  card.appendChild(body);
+
+  if (hint.line > 0) {
+    const line = document.createElement("p");
+    line.className = "console-hint-line";
+    line.textContent = `확인할 줄: ${hint.line}행`;
+    card.appendChild(line);
+  }
+
+  return card;
+}
+
+function buildStudentErrorHint(errorText) {
+  const normalized = String(errorText || "").replace(/\r/g, "");
+  const errorInfo = extractPythonErrorInfo(normalized);
+
+  if (!errorInfo) {
+    return null;
+  }
+
+  const { type, detail, line } = errorInfo;
+  let message = "";
+
+  if (type === "SyntaxError") {
+    if (/expected ':'/.test(detail) || /expected ':'/.test(normalized)) {
+      message = "for/if/while/def 문 끝에 ':'가 빠졌는지 확인해 보세요.";
+    } else if (/unterminated string literal|EOL while scanning string literal/.test(normalized)) {
+      message = "문자열 따옴표가 닫혔는지 확인해 보세요.";
+    } else {
+      message = "괄호, 따옴표, 콜론(:) 위치를 한 줄씩 다시 확인해 보세요.";
+    }
+  } else if (type === "IndentationError") {
+    if (/expected an indented block/.test(normalized)) {
+      message = "for/if/def 아래 실행 줄은 들여쓰기(보통 공백 4칸)로 안쪽에 넣어 주세요.";
+    } else if (/unexpected indent/.test(normalized)) {
+      message = "들여쓰기가 너무 깊거나 불필요합니다. 앞줄과 들여쓰기 깊이를 맞춰 보세요.";
+    } else {
+      message = "들여쓰기 깊이가 섞였을 가능성이 큽니다. 같은 블록은 같은 들여쓰기를 사용하세요.";
+    }
+  } else if (type === "NameError") {
+    const nameMatch = normalized.match(/NameError:\s+name ['"]?([^'"\s]+)['"]? is not defined/);
+    const missingName = nameMatch ? nameMatch[1] : "변수";
+    message = `${missingName} 이름이 아직 만들어지지 않았습니다. 오타 또는 선언 순서를 먼저 확인해 보세요.`;
+  } else if (type === "TypeError") {
+    if (/can only concatenate str/.test(normalized)) {
+      message = "문자열(str)과 숫자(int)를 바로 더할 수 없습니다. str() 또는 int()로 타입을 맞춰 보세요.";
+    } else if (/unsupported operand type\(s\) for/.test(normalized)) {
+      message = "서로 다른 타입끼리 계산하려고 했습니다. 계산 전에 타입을 맞춰 보세요.";
+    } else if (/is not subscriptable/.test(normalized)) {
+      message = "인덱스 접근([])이 불가능한 타입입니다. 리스트/문자열/딕셔너리인지 확인해 보세요.";
+    } else if (/is not callable/.test(normalized)) {
+      message = "함수처럼 호출했지만 함수가 아닌 값입니다. 변수명과 함수명을 다시 확인해 보세요.";
+    } else {
+      message = "연산에 사용한 값들의 타입이 맞는지 확인해 보세요.";
+    }
+  } else if (type === "ValueError") {
+    if (/invalid literal for int\(\)/.test(normalized)) {
+      message = "int()로 바꿀 수 없는 값입니다. 숫자만 입력했는지 확인해 보세요.";
+    } else {
+      message = "입력값 형식이 맞지 않습니다. 기대하는 값 형태를 다시 확인해 보세요.";
+    }
+  } else if (type === "ZeroDivisionError") {
+    message = "0으로 나눌 수 없습니다. 나누기 전에 분모가 0인지 먼저 확인해 보세요.";
+  } else if (type === "IndexError") {
+    message = "리스트 인덱스 범위를 벗어났습니다. list 길이보다 작은 인덱스만 사용해 보세요.";
+  } else if (type === "KeyError") {
+    message = "딕셔너리에 없는 키를 조회했습니다. 키 이름 오타 또는 존재 여부를 확인해 보세요.";
+  } else {
+    return null;
+  }
+
+  return { message, line };
+}
+
+function extractPythonErrorInfo(errorText) {
+  const matches = [...errorText.matchAll(/([A-Za-z]+Error):\s*([^\n]*)/g)];
+  if (!matches.length) {
+    return null;
+  }
+
+  const last = matches[matches.length - 1];
+  return {
+    type: last[1],
+    detail: last[2] || "",
+    line: extractErrorLineNumber(errorText),
+  };
+}
+
+function extractErrorLineNumber(errorText) {
+  const matches = [...errorText.matchAll(/line\s+(\d+)/g)];
+  if (!matches.length) {
+    return 0;
+  }
+
+  const line = Number(matches[matches.length - 1][1]);
+  return Number.isFinite(line) ? line : 0;
 }
 
 function renderStepConsole(stepIndex) {

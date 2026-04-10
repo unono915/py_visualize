@@ -433,6 +433,38 @@ textarea,
   color: #ffb6c1;
 }
 
+.console-hint {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 244, 214, 0.12);
+  border: 1px solid rgba(244, 180, 74, 0.35);
+}
+
+.console-hint-title,
+.console-hint-body,
+.console-hint-line {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.console-hint-title {
+  color: #ffd48f;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.console-hint-body {
+  margin-top: 4px;
+  color: #ffe8bf;
+}
+
+.console-hint-line {
+  margin-top: 6px;
+  color: #f7c77d;
+  font-size: 0.84rem;
+}
+
 .step-explorer {
   display: grid;
   gap: 14px;
@@ -606,6 +638,63 @@ textarea,
 }
 
 .loop-progress-text {
+  margin: 0;
+  color: var(--text-main);
+  line-height: 1.6;
+}
+
+.condition-progress-panel {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(255, 248, 232, 0.9);
+  border: 1px solid rgba(223, 165, 75, 0.24);
+}
+
+.condition-progress-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.condition-progress-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 0.84rem;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(136, 170, 193, 0.2);
+  color: var(--text-soft);
+}
+
+.condition-progress-chip.branch {
+  background: rgba(255, 245, 214, 0.96);
+  border-color: rgba(223, 165, 75, 0.34);
+  color: #906a22;
+}
+
+.condition-progress-chip.decision-true {
+  background: rgba(226, 251, 240, 0.96);
+  border-color: rgba(62, 168, 136, 0.3);
+  color: #2e6d58;
+}
+
+.condition-progress-chip.decision-false {
+  background: rgba(255, 236, 236, 0.96);
+  border-color: rgba(233, 124, 124, 0.28);
+  color: #8f3f3f;
+}
+
+.condition-progress-chip.next-branch {
+  background: rgba(236, 245, 255, 0.96);
+  border-color: rgba(102, 153, 224, 0.28);
+  color: #2f5f95;
+}
+
+.condition-progress-text {
   margin: 0;
   color: var(--text-main);
   line-height: 1.6;
