@@ -185,6 +185,7 @@ function cacheDom() {
   dom.conditionProgressPanel = document.getElementById("conditionProgressPanel");
   dom.conditionProgressChips = document.getElementById("conditionProgressChips");
   dom.conditionProgressText = document.getElementById("conditionProgressText");
+  dom.stepNarration = document.getElementById("stepNarration");
   dom.stepNarrationText = document.getElementById("stepNarrationText");
   dom.stepInputNote = document.getElementById("stepInputNote");
   dom.sceneCodeLine = document.getElementById("sceneCodeLine");
@@ -503,6 +504,9 @@ function clearStepExplorer() {
   dom.conditionProgressPanel.hidden = true;
   dom.conditionProgressChips.innerHTML = "";
   dom.conditionProgressText.textContent = "";
+  if (dom.stepNarration) {
+    dom.stepNarration.hidden = false;
+  }
   dom.stepNarrationText.textContent = "지금 단계에서 어떤 변화가 일어났는지 학생용 문장으로 설명합니다.";
   dom.stepInputNote.innerHTML = "";
   dom.stepInputNote.hidden = true;
@@ -560,6 +564,15 @@ function selectStep(index) {
 
 function renderStepNarration(snapshot, diff, stepIndex) {
   if (!dom.stepNarrationText) {
+    return;
+  }
+
+  const hasConditionDecision = Boolean(state.conditionStepMeta[stepIndex]?.decision);
+  if (dom.stepNarration) {
+    dom.stepNarration.hidden = hasConditionDecision;
+  }
+
+  if (hasConditionDecision) {
     return;
   }
 
