@@ -178,7 +178,6 @@ function cacheDom() {
   dom.stepRange = document.getElementById("stepRange");
   dom.stepLineBadge = document.getElementById("stepLineBadge");
   dom.stepPhaseText = document.getElementById("stepPhaseText");
-  dom.stepLineText = document.getElementById("stepLineText");
   dom.loopProgressPanel = document.getElementById("loopProgressPanel");
   dom.loopProgressChips = document.getElementById("loopProgressChips");
   dom.loopProgressText = document.getElementById("loopProgressText");
@@ -497,7 +496,6 @@ function clearStepExplorer() {
   dom.stepRange.value = "0";
   dom.stepLineBadge.textContent = "0행";
   dom.stepPhaseText.textContent = "실행 기록 없음";
-  dom.stepLineText.textContent = "코드를 실행하면 각 줄이 끝날 때마다 변수 변화가 기록됩니다.";
   dom.loopProgressPanel.hidden = true;
   dom.loopProgressChips.innerHTML = "";
   dom.loopProgressText.textContent = "";
@@ -547,7 +545,6 @@ function selectStep(index) {
   dom.stepCounter.textContent = `${safeIndex + 1} / ${state.executionSteps.length}`;
   dom.stepLineBadge.textContent = `${snapshot.line}행`;
   dom.stepPhaseText.textContent = `${snapshot.frame_label} 실행 후`;
-  dom.stepLineText.textContent = getSourceLine(snapshot.line);
   renderLoopProgress(safeIndex);
   renderConditionProgress(safeIndex);
   renderStepNarration(snapshot, state.stepDiffs[safeIndex] || null, safeIndex);
@@ -1418,17 +1415,6 @@ function buildLocalSummary(variable) {
 
 function getRawSourceLine(lineNumber) {
   return state.currentSourceLines[lineNumber - 1] ?? "";
-}
-
-function getSourceLine(lineNumber) {
-  const line = getRawSourceLine(lineNumber);
-  const trimmed = line.trim();
-
-  if (!trimmed) {
-    return `${lineNumber}행: (빈 줄 또는 블록 경계)`;
-  }
-
-  return `${lineNumber}행: ${trimmed}`;
 }
 
 function resetSceneCodeLine() {

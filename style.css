@@ -582,16 +582,6 @@ textarea,
   color: #8b6b24;
 }
 
-.step-line-text {
-  margin: 0;
-  padding: 12px 14px;
-  border-radius: 18px;
-  background: #fffdf7;
-  line-height: 1.7;
-  color: var(--text-main);
-  word-break: break-word;
-}
-
 .loop-progress-panel {
   display: grid;
   gap: 8px;
