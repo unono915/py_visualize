@@ -71,20 +71,32 @@ textarea,
 .page-shell {
   width: min(1560px, calc(100% - 24px));
   margin: 0 auto;
-  padding: 20px 0 24px;
+  padding: 14px 0 24px;
 }
 
 .hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(260px, 380px);
-  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
   align-items: center;
-  margin-bottom: 22px;
-  padding: 28px;
+  margin-bottom: 14px;
+  padding: 14px 18px;
   border: 1px solid rgba(255, 255, 255, 0.65);
-  border-radius: 30px;
+  border-radius: 22px;
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(255, 250, 238, 0.92));
   box-shadow: var(--shadow);
+}
+
+.hero-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.hero-title-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
 }
 
 .eyebrow,
@@ -108,14 +120,23 @@ textarea,
 }
 
 .hero h1 {
-  font-size: clamp(2.25rem, 4vw, 3.4rem);
-  line-height: 0.95;
+  font-size: clamp(2.2rem, 3.7vw, 3rem);
+  line-height: 0.98;
+  letter-spacing: 0.03em;
+  text-shadow: 0 6px 14px rgba(33, 53, 71, 0.09);
+}
+
+.hero-subtitle {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: clamp(0.96rem, 1.35vw, 1.12rem);
+  line-height: 1.2;
 }
 
 .hero-text {
-  margin: 14px 0 16px;
-  max-width: 52ch;
-  line-height: 1.7;
+  margin: 4px 0 0;
+  max-width: 60ch;
+  line-height: 1.5;
   color: var(--text-soft);
 }
 
@@ -146,15 +167,16 @@ textarea,
 
 .hero-mascot {
   justify-self: end;
-  width: min(100%, 330px);
-  padding: 12px;
+  width: clamp(94px, 12vw, 132px);
+  padding: 0;
+  opacity: 0.96;
 }
 
 .hero-mascot svg {
   display: block;
   width: 100%;
   height: auto;
-  filter: drop-shadow(0 18px 22px rgba(79, 185, 175, 0.2));
+  filter: drop-shadow(0 10px 14px rgba(79, 185, 175, 0.16));
 }
 
 .workspace {
@@ -771,6 +793,45 @@ textarea,
   color: #8b6b24;
   font-family: "Fira Code", "Consolas", monospace;
   font-size: 0.92rem;
+}
+
+.step-detail-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.step-detail-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  width: fit-content;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(136, 170, 193, 0.2);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease;
+}
+
+.step-detail-toggle:hover,
+.step-detail-toggle:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(79, 185, 175, 0.34);
+}
+
+.step-detail-toggle-icon {
+  font-size: 0.78rem;
+}
+
+.step-detail-toggle-text {
+  font-size: 0.88rem;
+}
+
+.step-detail-content {
+  display: grid;
+  gap: 8px;
 }
 
 .frame-stack {
@@ -1475,8 +1536,8 @@ textarea,
   }
 
   .hero-mascot {
-    justify-self: start;
-    max-width: 260px;
+    justify-self: end;
+    max-width: 124px;
   }
 
   .panel {

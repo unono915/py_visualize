@@ -20,15 +20,13 @@
   <div class="page-shell">
     <header class="hero">
       <div class="hero-copy">
-        <p class="eyebrow">Static Deploy Ready</p>
-        <h1>Python Playground Visualizer</h1>
-        <p class="hero-text">
-          학생이 직접 코드를 실행하고, 변수의 모양과 값 변화를 귀엽고 친근한 카드로
-          확인할 수 있는 파이썬 학습 페이지입니다.
-        </p>
-        <div class="hero-badges">
-          <span>Pyodide in Browser</span>
+        <div class="hero-title-line">
+          <h1>파이비쥬얼</h1>
+          <p class="hero-subtitle">파이선 시각화 도구</p>
         </div>
+        <p class="hero-text">
+          코드를 실행하면서 변수 변화와 실행 흐름을 한눈에 확인해 보세요.
+        </p>
       </div>
 
       <div class="hero-mascot" aria-hidden="true">
@@ -72,8 +70,8 @@
         <div class="example-strip" id="exampleStrip"></div>
 
         <div class="control-row">
-          <button id="runButton" class="action-button primary" disabled>▶ 실행</button>
-          <button id="stepRunButton" class="action-button secondary" disabled>↘ 한 줄 실행</button>
+          <button id="runButton" class="action-button primary">▶ 실행</button>
+          <button id="stepRunButton" class="action-button secondary">↘ 한 줄 실행</button>
           <button id="resetButton" class="action-button secondary">🗑 초기화</button>
           <p class="shortcut-hint">`Ctrl + Enter`로 바로 실행</p>
         </div>
@@ -101,7 +99,7 @@
         <div class="panel-heading">
           <div>
             <p class="panel-kicker">Visualizer</p>
-            <h2>Global Frame</h2>
+            <h2>실행 장면</h2>
           </div>
           <div id="variableCount" class="count-pill">0개 변수</div>
         </div>
@@ -161,8 +159,39 @@
 
             <div id="stepInputNote" class="step-input-note" hidden></div>
 
-            <div id="frameStack" class="frame-stack"></div>
-            <div id="activeLocals" class="locals-grid"></div>
+            <!--
+              초급 학습 단계에서는 프레임/로컬 변수 용어를 숨깁니다.
+              필요 시 아래 두 패널 블록의 주석을 해제하면 기능을 다시 사용할 수 있습니다.
+            <section class="step-detail-panel">
+              <button
+                id="framePanelToggle"
+                class="step-detail-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="framePanelContent">
+                <span class="step-detail-toggle-icon" aria-hidden="true">▸</span>
+                <span class="step-detail-toggle-text">프레임 스택 펼치기</span>
+              </button>
+              <div id="framePanelContent" class="step-detail-content" hidden>
+                <div id="frameStack" class="frame-stack"></div>
+              </div>
+            </section>
+
+            <section class="step-detail-panel">
+              <button
+                id="localsPanelToggle"
+                class="step-detail-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="localsPanelContent">
+                <span class="step-detail-toggle-icon" aria-hidden="true">▸</span>
+                <span class="step-detail-toggle-text">현재 로컬 변수 펼치기</span>
+              </button>
+              <div id="localsPanelContent" class="step-detail-content" hidden>
+                <div id="activeLocals" class="locals-grid"></div>
+              </div>
+            </section>
+            -->
 
             <p id="stepTruncatedNote" class="truncate-note" hidden>
               단계 수가 많아 일부 실행 기록만 저장했습니다.
@@ -203,7 +232,7 @@
 
   </div>
 
-  <div id="loadingOverlay" class="overlay">
+  <div id="loadingOverlay" class="overlay" hidden>
     <div class="overlay-card">
       <div class="loading-mascot" aria-hidden="true">
         <div class="loading-orbit"></div>

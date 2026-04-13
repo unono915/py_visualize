@@ -106,6 +106,8 @@ const DETAIL_PREVIEW_MAX_BODY_HEIGHT = 260;
 
 const state = {
   pyodide: null,
+  engineLoadPromise: null,
+  pendingExecutionOptions: null,
   isRunning: false,
   isPlaying: false,
   inputResolve: null,
@@ -123,6 +125,8 @@ const state = {
   lastResult: null,
   lastExecutedSource: "",
   consolePlaybackEnabled: false,
+  framePanelExpanded: false,
+  localsPanelExpanded: false,
   activeDetailPreview: null,
   detailPreviewHideTimer: null,
   sceneNodeOverrides: {},
@@ -136,9 +140,10 @@ document.addEventListener("DOMContentLoaded", () => {
   renderExampleButtons();
   loadInitialCode();
   bindEvents();
+  syncStepDetailPanels();
   updateLineNumbers();
   syncLineNumbers();
-  startLoad();
+  startLoad().catch(() => {});
 });
 
 function cacheDom() {
@@ -187,11 +192,19 @@ function cacheDom() {
   dom.stepNarration = document.getElementById("stepNarration");
   dom.stepNarrationText = document.getElementById("stepNarrationText");
   dom.stepInputNote = document.getElementById("stepInputNote");
+  dom.framePanelToggle = document.getElementById("framePanelToggle");
+  dom.framePanelContent = document.getElementById("framePanelContent");
+  dom.localsPanelToggle = document.getElementById("localsPanelToggle");
+  dom.localsPanelContent = document.getElementById("localsPanelContent");
   dom.sceneCodeLine = document.getElementById("sceneCodeLine");
   dom.frameStack = document.getElementById("frameStack");
   dom.activeLocals = document.getElementById("activeLocals");
   dom.stepTruncatedNote = document.getElementById("stepTruncatedNote");
   dom.autotestHook = document.getElementById("autotestHook");
+
+  if (dom.loadingOverlay) {
+    dom.loadingOverlay.hidden = true;
+  }
 }
 
 function bindEvents() {
@@ -204,12 +217,14 @@ function bindEvents() {
   window.addEventListener("pointermove", handleNodeDragMove);
   window.addEventListener("pointerup", handleNodeDragEnd);
   window.addEventListener("pointercancel", handleNodeDragEnd);
-  dom.runButton.addEventListener("click", () => executeCode());
+  dom.runButton.addEventListener("click", () => requestExecute());
   dom.stepRunButton.addEventListener("click", () =>
-    executeCode({ initialStepIndex: 0, consolePlayback: true })
+    requestExecute({ initialStepIndex: 0, consolePlayback: true })
   );
   dom.resetButton.addEventListener("click", resetWorkspace);
-  dom.retryLoadButton.addEventListener("click", startLoad);
+  dom.retryLoadButton.addEventListener("click", () => {
+    startLoad().catch(() => {});
+  });
   dom.submitInputButton.addEventListener("click", submitInput);
   dom.playPauseButton.addEventListener("click", togglePlayback);
   dom.playbackSpeed.addEventListener("change", handlePlaybackSpeedChange);
@@ -221,6 +236,12 @@ function bindEvents() {
   dom.stepRange.addEventListener("input", (event) => {
     navigateToStep(Number(event.target.value));
   });
+  if (dom.framePanelToggle) {
+    dom.framePanelToggle.addEventListener("click", toggleFramePanel);
+  }
+  if (dom.localsPanelToggle) {
+    dom.localsPanelToggle.addEventListener("click", toggleLocalsPanel);
+  }
   dom.inputField.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -317,9 +338,16 @@ function handleEditorKeydown(event) {
     return;
   }
 
-  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+  if (event.key === "Enter") {
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      requestExecute();
+      return;
+    }
+
     event.preventDefault();
-    executeCode();
+    insertAutoIndentedNewline();
+    return;
   }
 }
 
@@ -329,6 +357,25 @@ function insertAtCursor(text) {
   dom.codeInput.selectionStart = dom.codeInput.selectionEnd = selectionStart + text.length;
   updateLineNumbers();
   persistDraft(dom.codeInput.value);
+}
+
+function insertAutoIndentedNewline() {
+  const { selectionStart, selectionEnd, value } = dom.codeInput;
+  const lineStart = value.lastIndexOf("\n", selectionStart - 1) + 1;
+  const currentLineBeforeCursor = value.slice(lineStart, selectionStart);
+  const indentMatch = currentLineBeforeCursor.match(/^[ \t]*/);
+  const baseIndent = indentMatch ? indentMatch[0] : "";
+  const normalizedLine = currentLineBeforeCursor.trimEnd();
+  const shouldIncreaseIndent = /:\s*$/.test(normalizedLine);
+  const insertText = `\n${baseIndent}${shouldIncreaseIndent ? "    " : ""}`;
+  const nextValue = `${value.slice(0, selectionStart)}${insertText}${value.slice(selectionEnd)}`;
+  const nextCursor = selectionStart + insertText.length;
+
+  dom.codeInput.value = nextValue;
+  dom.codeInput.selectionStart = dom.codeInput.selectionEnd = nextCursor;
+  updateLineNumbers();
+  persistDraft(dom.codeInput.value);
+  syncLineNumbers();
 }
 
 function resetWorkspace() {
@@ -347,24 +394,36 @@ function resetWorkspace() {
 }
 
 async function startLoad() {
-  setEngineStatus("엔진 로딩 중", "loading");
-  setLoadProgress(5, "Pyodide 엔진 초기화 중");
-  dom.loadError.hidden = true;
-  dom.retryLoadButton.hidden = true;
-  dom.loadingOverlay.hidden = false;
+  if (state.pyodide) {
+    setEngineStatus("엔진 준비 완료", "ready");
+    return state.pyodide;
+  }
 
-  try {
-    if (typeof loadPyodide !== "function") {
-      throw new Error("Pyodide 스크립트를 불러오지 못했습니다.");
+  if (state.engineLoadPromise) {
+    return state.engineLoadPromise;
+  }
+
+  state.engineLoadPromise = (async () => {
+    setEngineStatus("엔진 백그라운드 로딩 중", "loading");
+    setLoadProgress(5, "Pyodide 엔진 초기화 중");
+    dom.loadError.hidden = true;
+    dom.retryLoadButton.hidden = true;
+    if (dom.loadingOverlay) {
+      dom.loadingOverlay.hidden = true;
     }
 
-    await wait(120);
-    setLoadProgress(20, "Python 인터프리터 다운로드 중");
+    try {
+      if (typeof loadPyodide !== "function") {
+        throw new Error("Pyodide 스크립트를 불러오지 못했습니다.");
+      }
 
-    state.pyodide = await loadPyodide({ indexURL: PYODIDE_INDEX });
+      await wait(120);
+      setLoadProgress(20, "Python 인터프리터 다운로드 중");
 
-    setLoadProgress(75, "표준 라이브러리 로드 중");
-    await state.pyodide.runPythonAsync(`
+      state.pyodide = await loadPyodide({ indexURL: PYODIDE_INDEX });
+
+      setLoadProgress(75, "표준 라이브러리 로드 중");
+      await state.pyodide.runPythonAsync(`
 import ast
 import builtins
 import contextlib
@@ -377,27 +436,29 @@ import traceback
 import types
 `);
 
-    setLoadProgress(100, "준비 완료!");
-    setEngineStatus("엔진 준비 완료", "ready");
-    dom.runButton.disabled = false;
-    dom.stepRunButton.disabled = false;
-    await wait(260);
-    dom.loadingOverlay.hidden = true;
-    await maybeRunAutotest();
-  } catch (error) {
-    dom.runButton.disabled = true;
-    dom.stepRunButton.disabled = true;
-    setEngineStatus("엔진 로드 실패", "error");
-    dom.loadError.hidden = false;
-    dom.loadError.textContent = formatJavascriptError(error);
-    dom.retryLoadButton.hidden = false;
-  }
+      setLoadProgress(100, "준비 완료!");
+      setEngineStatus("엔진 준비 완료", "ready");
+      await maybeRunAutotest();
+      return state.pyodide;
+    } catch (error) {
+      setEngineStatus("엔진 로드 실패", "error");
+      dom.loadError.hidden = false;
+      dom.loadError.textContent = formatJavascriptError(error);
+      dom.retryLoadButton.hidden = false;
+      throw error;
+    } finally {
+      state.engineLoadPromise = null;
+    }
+  })();
+
+  return state.engineLoadPromise;
 }
 
 function setLoadProgress(percent, message) {
   dom.loadMessage.textContent = message;
   dom.progressBar.style.width = `${percent}%`;
   dom.progressText.textContent = `${percent}%`;
+  setEngineStatus(`엔진 준비 중 ${percent}%`, "loading");
 }
 
 function setEngineStatus(label, tone) {
@@ -456,6 +517,32 @@ async function executeCode(options = {}) {
   }
 }
 
+async function requestExecute(options = {}) {
+  if (state.isRunning) {
+    return null;
+  }
+
+  if (!state.pyodide) {
+    state.pendingExecutionOptions = options;
+    setEngineStatus("엔진 준비 중 · 완료 후 자동 실행", "waiting");
+
+    try {
+      await startLoad();
+    } catch (error) {
+      return null;
+    }
+
+    const pendingOptions = state.pendingExecutionOptions || options;
+    state.pendingExecutionOptions = null;
+    if (!state.pyodide) {
+      return null;
+    }
+    return executeCode(pendingOptions);
+  }
+
+  return executeCode(options);
+}
+
 function setupStepExplorer(result, source, options = {}) {
   state.executionSteps = result.steps;
   state.stepDiffs = buildStepDiffs(result.steps);
@@ -509,11 +596,61 @@ function clearStepExplorer() {
   dom.stepInputNote.innerHTML = "";
   dom.stepInputNote.hidden = true;
   resetSceneCodeLine();
-  dom.frameStack.innerHTML = "";
-  dom.activeLocals.innerHTML = "";
+  if (dom.frameStack) {
+    dom.frameStack.innerHTML = "";
+  }
+  if (dom.activeLocals) {
+    dom.activeLocals.innerHTML = "";
+  }
   dom.stepTruncatedNote.hidden = true;
+  syncStepDetailPanels();
   updatePlayControls();
   updateLineNumbers();
+}
+
+function toggleFramePanel() {
+  state.framePanelExpanded = !state.framePanelExpanded;
+  syncStepDetailPanels();
+}
+
+function toggleLocalsPanel() {
+  state.localsPanelExpanded = !state.localsPanelExpanded;
+  syncStepDetailPanels();
+}
+
+function syncStepDetailPanels() {
+  setStepDetailPanelState({
+    toggle: dom.framePanelToggle,
+    content: dom.framePanelContent,
+    expanded: state.framePanelExpanded,
+    label: "프레임 스택",
+  });
+
+  setStepDetailPanelState({
+    toggle: dom.localsPanelToggle,
+    content: dom.localsPanelContent,
+    expanded: state.localsPanelExpanded,
+    label: "현재 로컬 변수",
+  });
+}
+
+function setStepDetailPanelState({ toggle, content, expanded, label }) {
+  if (!toggle || !content) {
+    return;
+  }
+
+  content.hidden = !expanded;
+  toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+
+  const iconEl = toggle.querySelector(".step-detail-toggle-icon");
+  if (iconEl) {
+    iconEl.textContent = expanded ? "▾" : "▸";
+  }
+
+  const textEl = toggle.querySelector(".step-detail-toggle-text");
+  if (textEl) {
+    textEl.textContent = expanded ? `${label} 접기` : `${label} 펼치기`;
+  }
 }
 
 function navigateToStep(index) {
@@ -544,15 +681,14 @@ function selectStep(index) {
   dom.stepRange.value = String(safeIndex);
   dom.stepCounter.textContent = `${safeIndex + 1} / ${state.executionSteps.length}`;
   dom.stepLineBadge.textContent = `${snapshot.line}행`;
-  dom.stepPhaseText.textContent = `${snapshot.frame_label} 실행 후`;
+  dom.stepPhaseText.textContent = "현재 단계 실행 후";
   renderLoopProgress(safeIndex);
   renderConditionProgress(safeIndex);
   renderStepNarration(snapshot, state.stepDiffs[safeIndex] || null, safeIndex);
   renderStepInputNote(snapshot.input_events || []);
   updateLineNumbers();
   renderSceneCodeLine(snapshot, state.stepDiffs[safeIndex] || null);
-  renderFrameStack(snapshot.frames || []);
-  renderActiveLocals(snapshot.active_locals || [], snapshot.frame_label);
+  // 프레임/로컬 변수 UI는 초급 모드에서 숨김 처리되어 렌더를 생략한다.
   renderVariables(snapshot.globals || [], state.stepDiffs[safeIndex] || null);
   renderStepConsole(safeIndex);
   updateStepControls();
@@ -1347,6 +1483,10 @@ function stopPlayback() {
 }
 
 function renderFrameStack(frames) {
+  if (!dom.frameStack) {
+    return;
+  }
+
   dom.frameStack.innerHTML = "";
 
   if (!frames.length) {
@@ -1366,6 +1506,10 @@ function renderFrameStack(frames) {
 }
 
 function renderActiveLocals(localVariables, frameLabel) {
+  if (!dom.activeLocals) {
+    return;
+  }
+
   dom.activeLocals.innerHTML = "";
 
   if (!localVariables.length) {
